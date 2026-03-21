@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import patch, MagicMock
-from crawler import fetch_robots_txt, fetch_sitemap, discover_urls
+from crawler import fetch_robots_txt, fetch_sitemap, discover_urls, score_url, _is_crawlable
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -307,3 +307,131 @@ class TestDiscoverUrls:
         discover_urls("https://example.com/")
 
         mock_robots.assert_called_once_with("https://example.com")
+
+
+# ── score_url ─────────────────────────────────────────────────────────────────
+
+class TestScoreUrl:
+    # Subdomain boosts
+    def test_docs_subdomain_scores_highest(self):
+        assert score_url("https://docs.example.com/") == 50
+
+    def test_api_subdomain_scores_highest(self):
+        assert score_url("https://api.example.com/") == 50
+
+    def test_help_subdomain_scores_highest(self):
+        assert score_url("https://help.example.com/") == 50
+
+    def test_unknown_subdomain_no_boost(self):
+        assert score_url("https://app.example.com/") == 0
+
+    # Keyword boosts
+    def test_blog_path_scores_40(self):
+        assert score_url("https://example.com/blog") == 40
+
+    def test_docs_path_scores_40(self):
+        assert score_url("https://example.com/docs") == 40
+
+    def test_features_path_scores_40(self):
+        assert score_url("https://example.com/features") == 40
+
+    def test_pricing_path_scores_40(self):
+        assert score_url("https://example.com/pricing") == 40
+
+    def test_no_keyword_no_boost(self):
+        assert score_url("https://example.com/") == 0
+
+    def test_unknown_path_no_boost(self):
+        assert score_url("https://example.com/zeroclick") == 0
+
+    # Depth penalty
+    def test_depth_1_no_penalty(self):
+        assert score_url("https://example.com/about") == 40   # keyword + no penalty
+
+    def test_depth_2_no_penalty(self):
+        assert score_url("https://example.com/blog/post") == 40  # /blog keyword, depth 2
+
+    def test_depth_3_penalised(self):
+        # /resources keyword (+40), depth 3 → penalty = (3-2)*15 = -15 → 25
+        assert score_url("https://example.com/resources/articles/foo") == 25
+
+    def test_depth_4_penalised_more(self):
+        # no keyword (0), depth 4 → penalty = (4-2)*15 = -30
+        assert score_url("https://example.com/a/b/c/d") == -30
+
+    def test_depth_penalty_does_not_apply_below_depth_3(self):
+        assert score_url("https://example.com/a/b") == 0  # depth 2, no keyword, no penalty
+
+    # Subdomain + depth interaction
+    def test_docs_subdomain_deep_path_still_penalised(self):
+        # subdomain boost +50, depth 4 → penalty = (4-2)*15 = -30 → 20
+        assert score_url("https://docs.example.com/a/b/c/d") == 20
+
+    # Homepage
+    def test_homepage_scores_zero(self):
+        assert score_url("https://example.com/") == 0
+
+
+# ── _is_crawlable ─────────────────────────────────────────────────────────────
+
+class TestIsCrawlable:
+    BASE = "example.com"
+
+    # Scheme filtering
+    def test_http_allowed(self):
+        assert _is_crawlable("http://example.com/page", self.BASE) is True
+
+    def test_https_allowed(self):
+        assert _is_crawlable("https://example.com/page", self.BASE) is True
+
+    def test_mailto_rejected(self):
+        assert _is_crawlable("mailto:info@example.com", self.BASE) is False
+
+    def test_javascript_rejected(self):
+        assert _is_crawlable("javascript:void(0)", self.BASE) is False
+
+    def test_ftp_rejected(self):
+        assert _is_crawlable("ftp://example.com/file", self.BASE) is False
+
+    # Domain filtering
+    def test_same_domain_allowed(self):
+        assert _is_crawlable("https://example.com/about", self.BASE) is True
+
+    def test_subdomain_same_root_allowed(self):
+        assert _is_crawlable("https://docs.example.com/guide", self.BASE) is True
+
+    def test_different_domain_rejected(self):
+        assert _is_crawlable("https://other.com/page", self.BASE) is False
+
+    def test_relative_url_allowed(self):
+        assert _is_crawlable("/about", self.BASE) is True
+
+    # Extension filtering
+    def test_image_jpg_rejected(self):
+        assert _is_crawlable("https://example.com/image.jpg", self.BASE) is False
+
+    def test_image_png_rejected(self):
+        assert _is_crawlable("https://example.com/logo.png", self.BASE) is False
+
+    def test_css_rejected(self):
+        assert _is_crawlable("https://example.com/style.css", self.BASE) is False
+
+    def test_js_rejected(self):
+        assert _is_crawlable("https://example.com/app.js", self.BASE) is False
+
+    def test_pdf_rejected(self):
+        assert _is_crawlable("https://example.com/doc.pdf", self.BASE) is False
+
+    def test_html_page_allowed(self):
+        assert _is_crawlable("https://example.com/page.html", self.BASE) is True
+
+    def test_no_extension_allowed(self):
+        assert _is_crawlable("https://example.com/about", self.BASE) is True
+
+    # Anchor links
+    def test_pure_anchor_rejected(self):
+        assert _is_crawlable("#section", self.BASE) is False
+
+    def test_page_with_fragment_allowed(self):
+        # has a path — fragment stripped by caller, so is crawlable
+        assert _is_crawlable("https://example.com/page#section", self.BASE) is True

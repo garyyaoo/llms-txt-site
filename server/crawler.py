@@ -1,6 +1,174 @@
+import time
+from collections import deque
+
 import requests
+from bs4 import BeautifulSoup
 import xml.etree.ElementTree as ET
 from urllib.parse import urljoin, urlparse
+
+# Extensions that are never useful page content
+_SKIP_EXTENSIONS = {
+    ".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".ico",
+    ".css", ".js", ".json", ".xml", ".pdf", ".zip", ".gz",
+    ".mp4", ".mp3", ".woff", ".woff2", ".ttf",
+}
+
+
+def _root_domain(netloc: str) -> str:
+    """Return the root domain (last two labels) from a netloc, e.g. 'vancouver.craigslist.org' → 'craigslist.org'."""
+    parts = netloc.split(".")
+    return ".".join(parts[-2:]) if len(parts) >= 2 else netloc
+
+
+def _is_same_domain(url: str, base_netloc: str) -> bool:
+    parsed = urlparse(url)
+    if not parsed.netloc:
+        return True  # relative URL
+    return _root_domain(parsed.netloc) == _root_domain(base_netloc)
+
+
+def _is_crawlable(url: str, base_netloc: str) -> bool:
+    """Return True if the URL is worth fetching as a page."""
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https", ""):
+        return False
+    if not _is_same_domain(url, base_netloc):
+        return False
+    if parsed.fragment and not parsed.path:
+        return False  # pure anchor link
+    ext = parsed.path.rsplit(".", 1)[-1].lower()
+    if f".{ext}" in _SKIP_EXTENSIONS:
+        return False
+    return True
+
+
+_PRIORITY_KEYWORDS = {
+    "/about", "/docs", "/documentation", "/guide", "/guides", "/api", "/faq",
+    "/help", "/getting-started", "/reference", "/features", "/customers",
+    "/case-study", "/resources", "/blog", "/pricing", "/products", "/services",
+    "/overview", "/changelog", "/support", "/engineering", "/research",
+}
+# Subdomains that indicate high-value content regardless of path
+_HIGH_PRIORITY_SUBDOMAINS = {"docs", "api", "help", "support", "developers", "dev"}
+
+
+def score_url(url: str) -> int:
+    """Score a URL by relevance. Higher = more important for llms.txt."""
+    parsed = urlparse(url)
+    path = parsed.path.lower().rstrip("/")
+    subdomain = parsed.hostname.split(".")[0] if parsed.hostname else ""
+    depth = path.count("/") if path else 0
+    score = 0
+
+    # Subdomain boost — e.g. docs.example.com scores high even with path "/"
+    if subdomain in _HIGH_PRIORITY_SUBDOMAINS:
+        score += 50
+    elif any(k in path for k in _PRIORITY_KEYWORDS):
+        score += 40
+
+    # Depth penalty — only kicks in beyond depth 2, heavily penalises deep pages
+    score -= max(0, depth - 2) * 15
+
+    return score
+
+
+def _extract_nav_links(html: str, page_url: str) -> list[str]:
+    """Return absolute URLs found only inside <nav>, <header>, or <footer> elements."""
+    soup = BeautifulSoup(html, "html.parser")
+    links = []
+    for container in soup.find_all(["nav", "header", "footer"]):
+        for a in container.find_all("a", href=True):
+            href = a["href"].strip()
+            if href:
+                links.append(urljoin(page_url, href))
+    return links
+
+
+def crawl_site(
+    base_url: str,
+    disallowed: list[str] | None = None,
+    max_pages: int = 100,
+    max_depth: int = 3,
+    delay: float = 0.5,
+) -> list[str]:
+    """
+    BFS crawler that discovers pages by following links found exclusively
+    in <nav>, <header>, and <footer> elements.
+
+    Args:
+        base_url:   The starting URL (homepage).
+        disallowed: Path prefixes to skip (from robots.txt).
+        max_pages:  Stop after collecting this many URLs.
+        max_depth:  Do not follow links beyond this hop count from the start.
+        delay:      Seconds to wait between requests.
+
+    Returns:
+        Ordered list of discovered page URLs (start URL first).
+    """
+    if disallowed is None:
+        disallowed = []
+
+    base_url = base_url.rstrip("/")
+    base_netloc = urlparse(base_url).netloc
+
+    visited: set[str] = set()
+    queued: set[str] = set()  # tracks what's already in the queue to avoid duplicates
+    found: list[str] = []
+
+    # Queue entries: (url, depth)
+    start = base_url.rstrip("/")
+    queue: deque[tuple[str, int]] = deque([(start, 0)])
+    queued.add(start)
+
+    while queue and len(found) < max_pages:
+        url, depth = queue.popleft()
+
+        # Normalise: strip fragment, query params, and trailing slash
+        url = urlparse(url)._replace(fragment="", query="").geturl().rstrip("/") or url
+
+        if url in visited:
+            continue
+        visited.add(url)
+
+        path = urlparse(url).path
+        if any(path.startswith(d) for d in disallowed):
+            print(f"[crawl] skip (disallowed) {url}")
+            continue
+
+        t0 = time.time()
+        try:
+            r = requests.get(
+                url,
+                timeout=3,
+                headers={"User-Agent": "Mozilla/5.0 (compatible; llmstxt-bot/1.0)"},
+                allow_redirects=True,
+            )
+            r.raise_for_status()
+            if "text/html" not in r.headers.get("Content-Type", ""):
+                continue
+        except Exception as e:
+            elapsed = time.time() - t0
+            print(f"[crawl] error ({elapsed:.1f}s) {url}: {e}")
+            continue
+
+        elapsed = time.time() - t0
+        found.append(url)
+        print(f"[crawl] {len(found):>3}/{max_pages}  depth={depth}  {elapsed:.1f}s  {url}")
+
+        if depth < max_depth:
+            for link in _extract_nav_links(r.text, url):
+                norm = urlparse(link)._replace(fragment="", query="").geturl().rstrip("/")
+                if not norm or not _is_crawlable(norm, base_netloc):
+                    continue
+                if norm not in visited and norm not in queued:
+                    queued.add(norm)
+                    queue.append((norm, depth + 1))
+
+        if delay and len(found) < max_pages:
+            time.sleep(delay)
+
+    print(f"[crawl] done — {len(found)} pages crawled")
+    return sorted(found, key=score_url, reverse=True)
 
 
 def fetch_robots_txt(base_url: str) -> dict:
@@ -98,6 +266,11 @@ def discover_urls(base_url: str) -> dict:
         except Exception as e:
             print(f"[sitemap] Could not fetch {sitemap_url}: {e}")
 
+    # Step 4: if sitemap yielded nothing, fall back to nav crawler
+    if not all_urls:
+        print(f"[discover] no sitemap URLs found — falling back to nav crawler")
+        all_urls = crawl_site(base_url, disallowed=result["disallowed"])
+
     # Deduplicate and filter out disallowed paths
     seen = set()
     filtered = []
@@ -109,6 +282,8 @@ def discover_urls(base_url: str) -> dict:
         if any(path.startswith(d) for d in result["disallowed"]):
             continue
         filtered.append(url)
+
+    filtered.sort(key=score_url, reverse=True)
 
     result["page_urls"] = filtered
     print(f"[discover] {len(filtered)} unique allowed URLs found")
