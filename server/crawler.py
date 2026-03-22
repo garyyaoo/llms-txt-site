@@ -44,11 +44,9 @@ def _is_crawlable(url: str, base_netloc: str) -> bool:
 
 _PRIORITY_KEYWORDS = {
     "/about", "/docs", "/documentation", "/guide", "/guides", "/api", "/faq",
-    "/help", "/getting-started", "/reference", "/features", "/customers",
-    "/case-study", "/resources", "/blog", "/pricing", "/products", "/services",
-    "/overview", "/changelog", "/support", "/engineering", "/research",
-}
-# Subdomains that indicate high-value content regardless of path
+    "/help", "/getting-started", "/reference", "/features",
+    "/pricing", "/products", "/services", "/overview", "/support", "/engineering",
+}# Subdomains that indicate high-value content regardless of path
 _HIGH_PRIORITY_SUBDOMAINS = {"docs", "api", "help", "support", "developers", "dev"}
 
 
@@ -64,19 +62,23 @@ def score_url(url: str) -> int:
     if subdomain in _HIGH_PRIORITY_SUBDOMAINS:
         score += 50
     else:
-        # Match keywords against individual path segments to avoid false positives
-        # e.g. /support matches /support but NOT /legal/support-policy
-        path_segments = {"/" + s for s in path.lstrip("/").split("/") if s}
+        # Strip file extensions from segments before keyword matching
+        # e.g. /intro.html → /intro, so it can match /introduction etc.
+        def _strip_ext(s: str) -> str:
+            return s.rsplit(".", 1)[0] if "." in s else s
+        path_segments = {"/" + _strip_ext(s) for s in path.lstrip("/").split("/") if s}
         if any(k in path_segments for k in _PRIORITY_KEYWORDS):
             score += 40
 
-    # URL length penalty — long paths signal deep content pages, not structural pages
-    # Every 5 chars beyond 15 costs 1 point (e.g. 70-char path = -11, 15-char = 0)
-    score -= max(0, len(path) - 15) // 5
+    # URL length penalty — paths beyond 20 chars are penalised heavily
+    # Every 2 chars beyond 20 costs 1 point (e.g. 60-char path = -20, 20-char = 0)
+    score -= max(0, len(path) - 20) // 2
 
-    # Depth penalty — small tiebreaker from depth 1, heavy penalty beyond depth 2
-    score -= max(0, depth - 1) * 5
-    score -= max(0, depth - 2) * 10
+    # Depth penalty: depth 1=0, 2=5, 3=20, 4=40, 5=60, ...
+    if depth >= 3:
+        score -= 20 + (depth - 3) * 20
+    elif depth == 2:
+        score -= 5
 
     return score
 

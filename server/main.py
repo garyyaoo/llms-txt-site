@@ -23,18 +23,15 @@ def run(base_url: str, output_path: str | None = None) -> str:
     urls = result["page_urls"]
     print(f"Discovered {len(urls)} URLs")
 
-    # 2. Group
+    # 2. Scrape metadata (URLs already sorted by score)
+    print("\n=== Scraping metadata ===")
+    metadata = scrape_metadata(urls, base_url=base_url)
+
+    # 3. Group using combined url + content scores
     print("\n=== Grouping ===")
-    groups = group_urls(urls)
+    groups = group_urls(urls, metadata)
     for section, section_urls in groups.items():
         print(f"  {section}: {len(section_urls)} URLs")
-
-    # Flatten grouped URLs for scraping (preserve section priority order)
-    ordered_urls = [u for url_list in groups.values() for u in url_list]
-
-    # 3. Scrape metadata
-    print("\n=== Scraping metadata ===")
-    metadata = scrape_metadata(ordered_urls, base_url=base_url)
 
     # 4. Generate
     print("\n=== Generating llms.txt ===")

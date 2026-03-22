@@ -60,7 +60,7 @@ def _fetch_metadata(url: str) -> dict:
 _HOW_TO_PATTERNS = [
     "how to", "getting started", "introduction", "guide", "tutorial",
     "quickstart", "overview", "reference", "setup", "install", "learn",
-    "step", "walkthrough", "explained", "what is",
+    "step", "walkthrough", "explained", "what",
 ]
 
 

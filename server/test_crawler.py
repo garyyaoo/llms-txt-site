@@ -342,8 +342,9 @@ class TestScoreUrl:
         assert score_url("https://app.example.com/") == 0
 
     # Keyword boosts
-    def test_blog_path_scores_40(self):
-        assert score_url("https://example.com/blog") == 40
+    def test_blog_path_scores_0(self):
+        # /blog removed from PRIORITY_KEYWORDS (UGC section)
+        assert score_url("https://example.com/blog") == 0
 
     def test_docs_path_scores_40(self):
         assert score_url("https://example.com/docs") == 40
@@ -364,26 +365,26 @@ class TestScoreUrl:
     def test_depth_1_no_penalty(self):
         assert score_url("https://example.com/about") == 40   # keyword + no penalty
 
-    def test_depth_2_penalised_slightly(self):
-        # /blog keyword (+40), depth 2 → penalty = (2-1)*5 = -5 → 35
-        assert score_url("https://example.com/blog/post") == 35
+    def test_depth_2_penalised(self):
+        # no keyword, depth 2 → penalty = 5
+        assert score_url("https://example.com/blog/post") == -5
 
     def test_depth_3_penalised(self):
-        # /resources keyword (+40), depth 3, path len 23 → depth penalty -20, length penalty -1 → 19
-        assert score_url("https://example.com/resources/articles/foo") == 19
+        # no keyword, depth 3, path len 23 → depth -20, length -1 → -21
+        assert score_url("https://example.com/resources/articles/foo") == -21
 
     def test_depth_4_penalised_more(self):
-        # no keyword (0), depth 4 → penalty = (4-1)*5 + (4-2)*10 = -15 -20 = -35
-        assert score_url("https://example.com/a/b/c/d") == -35
+        # no keyword, depth 4 → penalty = 40
+        assert score_url("https://example.com/a/b/c/d") == -40
 
     def test_depth_2_no_keyword_penalised(self):
-        # depth 2, no keyword → penalty = (2-1)*5 = -5
+        # depth 2, no keyword → penalty = 5
         assert score_url("https://example.com/a/b") == -5
 
     # Subdomain + depth interaction
     def test_docs_subdomain_deep_path_still_penalised(self):
-        # subdomain boost +50, depth 4 → penalty = (4-1)*5 + (4-2)*10 = -35 → 15
-        assert score_url("https://docs.example.com/a/b/c/d") == 15
+        # subdomain boost +50, depth 4 → penalty = 40 → 10
+        assert score_url("https://docs.example.com/a/b/c/d") == 10
 
     # Keyword segment matching — keywords must match a full path segment
     def test_keyword_in_nested_segment_does_not_boost(self):
@@ -394,8 +395,8 @@ class TestScoreUrl:
         assert score_url("https://example.com/support") == 40
 
     def test_keyword_as_first_segment_scores_40(self):
-        # /docs (+40), depth 2 penalty (-5), path len 21 length penalty (-1) → 34
-        assert score_url("https://example.com/docs/getting-started") == 34
+        # /docs (+40), depth 2 penalty (-5), path len 21 → length penalty max(0,21-20)//2=0 → 35
+        assert score_url("https://example.com/docs/getting-started") == 35
 
     def test_non_keyword_segment_path_no_boost(self):
         # /solutions has no keyword; subdomain is www which is not in HIGH_PRIORITY_SUBDOMAINS
