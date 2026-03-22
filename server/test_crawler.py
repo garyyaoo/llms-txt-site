@@ -308,6 +308,22 @@ class TestDiscoverUrls:
 
         mock_robots.assert_called_once_with("https://example.com")
 
+    @patch("crawler.fetch_sitemap")
+    @patch("crawler.fetch_robots_txt")
+    def test_llms_txt_filtered_out(self, mock_robots, mock_sitemap):
+        mock_robots.return_value = {"disallowed": [], "sitemaps": [], "raw": ""}
+        mock_sitemap.return_value = [
+            "https://example.com/about",
+            "https://example.com/llms.txt",
+            "https://example.com/llms-full.txt",
+        ]
+
+        result = discover_urls("https://example.com")
+
+        assert "https://example.com/about" in result["page_urls"]
+        assert "https://example.com/llms.txt" not in result["page_urls"]
+        assert "https://example.com/llms-full.txt" not in result["page_urls"]
+
 
 # ── score_url ─────────────────────────────────────────────────────────────────
 
@@ -348,24 +364,42 @@ class TestScoreUrl:
     def test_depth_1_no_penalty(self):
         assert score_url("https://example.com/about") == 40   # keyword + no penalty
 
-    def test_depth_2_no_penalty(self):
-        assert score_url("https://example.com/blog/post") == 40  # /blog keyword, depth 2
+    def test_depth_2_penalised_slightly(self):
+        # /blog keyword (+40), depth 2 → penalty = (2-1)*5 = -5 → 35
+        assert score_url("https://example.com/blog/post") == 35
 
     def test_depth_3_penalised(self):
-        # /resources keyword (+40), depth 3 → penalty = (3-2)*15 = -15 → 25
-        assert score_url("https://example.com/resources/articles/foo") == 25
+        # /resources keyword (+40), depth 3, path len 23 → depth penalty -20, length penalty -1 → 19
+        assert score_url("https://example.com/resources/articles/foo") == 19
 
     def test_depth_4_penalised_more(self):
-        # no keyword (0), depth 4 → penalty = (4-2)*15 = -30
-        assert score_url("https://example.com/a/b/c/d") == -30
+        # no keyword (0), depth 4 → penalty = (4-1)*5 + (4-2)*10 = -15 -20 = -35
+        assert score_url("https://example.com/a/b/c/d") == -35
 
-    def test_depth_penalty_does_not_apply_below_depth_3(self):
-        assert score_url("https://example.com/a/b") == 0  # depth 2, no keyword, no penalty
+    def test_depth_2_no_keyword_penalised(self):
+        # depth 2, no keyword → penalty = (2-1)*5 = -5
+        assert score_url("https://example.com/a/b") == -5
 
     # Subdomain + depth interaction
     def test_docs_subdomain_deep_path_still_penalised(self):
-        # subdomain boost +50, depth 4 → penalty = (4-2)*15 = -30 → 20
-        assert score_url("https://docs.example.com/a/b/c/d") == 20
+        # subdomain boost +50, depth 4 → penalty = (4-1)*5 + (4-2)*10 = -35 → 15
+        assert score_url("https://docs.example.com/a/b/c/d") == 15
+
+    # Keyword segment matching — keywords must match a full path segment
+    def test_keyword_in_nested_segment_does_not_boost(self):
+        # /legal/support-policy contains "support" as a substring but not as a segment
+        assert score_url("https://example.com/legal/support-policy") < 40
+
+    def test_support_segment_scores_40(self):
+        assert score_url("https://example.com/support") == 40
+
+    def test_keyword_as_first_segment_scores_40(self):
+        # /docs (+40), depth 2 penalty (-5), path len 21 length penalty (-1) → 34
+        assert score_url("https://example.com/docs/getting-started") == 34
+
+    def test_non_keyword_segment_path_no_boost(self):
+        # /solutions has no keyword; subdomain is www which is not in HIGH_PRIORITY_SUBDOMAINS
+        assert score_url("https://example.com/solutions") == 0
 
     # Homepage
     def test_homepage_scores_zero(self):

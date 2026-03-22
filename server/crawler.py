@@ -63,11 +63,20 @@ def score_url(url: str) -> int:
     # Subdomain boost — e.g. docs.example.com scores high even with path "/"
     if subdomain in _HIGH_PRIORITY_SUBDOMAINS:
         score += 50
-    elif any(k in path for k in _PRIORITY_KEYWORDS):
-        score += 40
+    else:
+        # Match keywords against individual path segments to avoid false positives
+        # e.g. /support matches /support but NOT /legal/support-policy
+        path_segments = {"/" + s for s in path.lstrip("/").split("/") if s}
+        if any(k in path_segments for k in _PRIORITY_KEYWORDS):
+            score += 40
 
-    # Depth penalty — only kicks in beyond depth 2, heavily penalises deep pages
-    score -= max(0, depth - 2) * 15
+    # URL length penalty — long paths signal deep content pages, not structural pages
+    # Every 5 chars beyond 15 costs 1 point (e.g. 70-char path = -11, 15-char = 0)
+    score -= max(0, len(path) - 15) // 5
+
+    # Depth penalty — small tiebreaker from depth 1, heavy penalty beyond depth 2
+    score -= max(0, depth - 1) * 5
+    score -= max(0, depth - 2) * 10
 
     return score
 
@@ -280,6 +289,9 @@ def discover_urls(base_url: str) -> dict:
         seen.add(url)
         path = urlparse(url).path
         if any(path.startswith(d) for d in result["disallowed"]):
+            continue
+        # Filter meta/utility files — not useful page content
+        if path.rstrip("/").endswith("llms.txt") or path.rstrip("/").endswith("llms-full.txt"):
             continue
         filtered.append(url)
 
