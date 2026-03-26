@@ -1,8 +1,9 @@
 # LLMs.txt Generator
 
+
 Generate an `llms.txt` file for any website — a structured summary of a site's content designed for LLMs.
 
-<video src="assets/llmstxt-demo.mp4" controls width="100%"></video>
+[https://qhufgnhtn6.us-east-1.awsapprunner.com/](https://qhufgnhtn6.us-east-1.awsapprunner.com/)
 
 ## How it works
 
