@@ -2,7 +2,7 @@
 
 Generate an `llms.txt` file for any website — a structured summary of a site's content designed for LLMs.
 
-<video src="assets/llmstxt-demo-720p.mp4" controls width="100%"></video>
+<video src="assets/llmstxt-demo.mp4" controls width="100%"></video>
 
 ## How it works
 
