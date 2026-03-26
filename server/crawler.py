@@ -1,3 +1,5 @@
+import re
+import logging
 import time
 from collections import deque
 
@@ -6,6 +8,10 @@ from bs4 import BeautifulSoup
 import xml.etree.ElementTree as ET
 from urllib.parse import urljoin, urlparse
 from scraper import extract_metadata, _slug_to_title
+
+log = logging.getLogger(__name__)
+
+_LOCALE_RE = re.compile(r"^/([a-z]{2}|[a-z]{2}-[a-z]{2,4})(/|$)", re.IGNORECASE)
 
 # Extensions that are never useful page content
 _SKIP_EXTENSIONS = {
@@ -41,6 +47,11 @@ def _is_crawlable(url: str, base_netloc: str) -> bool:
     if f".{ext}" in _SKIP_EXTENSIONS:
         return False
     return True
+
+
+def _normalize_url(url: str) -> str:
+    """Strip fragment and query string, remove trailing slash."""
+    return urlparse(url)._replace(fragment="", query="").geturl().rstrip("/")
 
 
 _PRIORITY_KEYWORDS = {
@@ -138,11 +149,11 @@ def crawl_site(
 
     while queue and len(found) < max_pages:
         if total_timeout and (time.time() - t_start) >= total_timeout:
-            print(f"[crawl] stopping — timeout {total_timeout}s reached after {len(found)} pages")
+            log.info(f"[crawl] stopping — timeout {total_timeout}s reached after {len(found)} pages")
             break
         url, depth = queue.popleft()
 
-        url = urlparse(url)._replace(fragment="", query="").geturl().rstrip("/") or url
+        url = _normalize_url(url) or url
 
         if url in visited:
             continue
@@ -150,11 +161,11 @@ def crawl_site(
 
         path = urlparse(url).path
         if any(path.startswith(d) for d in disallowed):
-            print(f"[crawl] skip (disallowed) {url}")
+            log.info(f"[crawl] skip (disallowed) {url}")
             continue
 
         if total_timeout and (time.time() - t_start) >= total_timeout:
-            print(f"[crawl] stopping — timeout {total_timeout}s reached after {len(found)} pages")
+            log.info(f"[crawl] stopping — timeout {total_timeout}s reached after {len(found)} pages")
             break
 
         t0 = time.time()
@@ -170,7 +181,7 @@ def crawl_site(
                 continue
         except Exception as e:
             elapsed = time.time() - t0
-            print(f"[crawl] error ({elapsed:.1f}s) {url}: {e}")
+            log.info(f"[crawl] error ({elapsed:.1f}s) {url}: {e}")
             metadata[url] = {"url": url, "title": _slug_to_title(url), "description": None, "scraped": False}
             continue
 
@@ -178,13 +189,13 @@ def crawl_site(
         found.append(url)
         meta = extract_metadata(r.text, url)
         metadata[url] = meta
-        print(f"[crawl] {len(found):>3}/{max_pages}  depth={depth}  {elapsed:.1f}s  {meta['title'][:50]}")
+        log.info(f"[crawl] {len(found):>3}/{max_pages}  depth={depth}  {elapsed:.1f}s  {meta['title'][:50]}")
         if on_progress:
             on_progress(url)
 
         if depth < max_depth:
             for link in _extract_nav_links(r.text, url):
-                norm = urlparse(link)._replace(fragment="", query="").geturl().rstrip("/")
+                norm = _normalize_url(link)
                 if not norm or not _is_crawlable(norm, base_netloc):
                     continue
                 if norm not in visited and norm not in queued:
@@ -194,7 +205,7 @@ def crawl_site(
         if delay and len(found) < max_pages:
             time.sleep(delay)
 
-    print(f"[crawl] done — {len(found)} pages crawled")
+    log.info(f"[crawl] done — {len(found)} pages crawled")
     urls = sorted(found, key=score_url, reverse=True)
     return {"urls": urls, "metadata": metadata}
 
@@ -290,9 +301,9 @@ def discover_urls(base_url: str, force_crawl: bool = False, max_pages: int = 100
         result["robots"] = robots
         result["disallowed"] = robots["disallowed"]
         sitemap_urls = robots["sitemaps"]
-        print(f"[robots.txt] Found {len(robots['disallowed'])} disallowed paths, {len(sitemap_urls)} sitemap(s)")
+        log.info(f"[robots.txt] Found {len(robots['disallowed'])} disallowed paths, {len(sitemap_urls)} sitemap(s)")
     except Exception as e:
-        print(f"[robots.txt] Could not fetch: {e}")
+        log.info(f"[robots.txt] Could not fetch: {e}")
         sitemap_urls = []
 
     # Step 2: always try /sitemap.xml as a fallback
@@ -308,28 +319,23 @@ def discover_urls(base_url: str, force_crawl: bool = False, max_pages: int = 100
     if not force_crawl:
         for sitemap_url in sitemap_urls:
             if discovery_timeout and (time.time() - t_discover) >= discovery_timeout:
-                print(f"[discover] sitemap fetch stopped — timeout {discovery_timeout}s reached")
+                log.info(f"[discover] sitemap fetch stopped — timeout {discovery_timeout}s reached")
                 break
             try:
                 urls = fetch_sitemap(sitemap_url, on_progress=on_progress)
-                print(f"[sitemap] {sitemap_url} → {len(urls)} URLs")
+                log.info(f"[sitemap] {sitemap_url} → {len(urls)} URLs")
                 all_urls.extend(urls)
             except Exception as e:
-                print(f"[sitemap] Could not fetch {sitemap_url}: {e}")
+                log.info(f"[sitemap] Could not fetch {sitemap_url}: {e}")
 
     # Step 4: if sitemap yielded nothing (or crawl forced), use nav crawler (metadata extracted during crawl)
     if force_crawl or not all_urls:
         reason = "force_crawl" if force_crawl else "no sitemap URLs found"
-        print(f"[discover] {reason} — using nav crawler")
+        log.info(f"[discover] {reason} — using nav crawler")
         remaining = max(0.0, discovery_timeout - (time.time() - t_discover)) if discovery_timeout else None
         crawl_result = crawl_site(base_url, disallowed=result["disallowed"], delay=0.0, max_pages=max_pages, on_progress=on_progress, total_timeout=remaining, max_depth=max_depth)
         all_urls = crawl_result["urls"]
         result["metadata"] = crawl_result["metadata"]
-
-    # Known i18n locale prefixes — strip these paths when a canonical version exists
-    _LOCALE_RE = __import__("re").compile(
-        r"^/([a-z]{2}|[a-z]{2}-[a-z]{2,4})(/|$)", __import__("re").IGNORECASE
-    )
 
     def _canonical_path(path: str) -> str | None:
         """Return the canonical (non-locale) path, or None if not a locale URL."""
@@ -367,11 +373,11 @@ def discover_urls(base_url: str, force_crawl: bool = False, max_pages: int = 100
         filtered.append(url)
 
     if skipped_i18n:
-        print(f"[discover] filtered {skipped_i18n} i18n duplicate URLs")
+        log.info(f"[discover] filtered {skipped_i18n} i18n duplicate URLs")
     filtered.sort(key=score_url, reverse=True)
 
     result["page_urls"] = filtered
-    print(f"[discover] {len(filtered)} unique allowed URLs found")
+    log.info(f"[discover] {len(filtered)} unique allowed URLs found")
     return result
 
 
@@ -391,7 +397,7 @@ def main():
     urls_path = os.path.join(output_dir, "urls.txt")
     with open(urls_path, "w") as f:
         f.write("\n".join(result["page_urls"]))
-    print(f"\nSaved {len(result['page_urls'])} URLs → {urls_path}")
+    log.info(f"Saved {len(result['page_urls'])} URLs → {urls_path}")
 
     # Save full result as JSON
     json_path = os.path.join(output_dir, "crawl_result.json")
@@ -405,7 +411,7 @@ def main():
             "page_count": len(result["page_urls"]),
             "page_urls": result["page_urls"],
         }, f, indent=2)
-    print(f"Saved full result    → {json_path}")
+    log.info(f"Saved full result    → {json_path}")
 
 
 if __name__ == "__main__":

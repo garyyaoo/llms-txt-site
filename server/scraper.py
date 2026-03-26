@@ -1,9 +1,12 @@
+import logging
 import time
 from concurrent.futures import ThreadPoolExecutor, wait
 from urllib.parse import urlparse
 
 import requests
 from bs4 import BeautifulSoup
+
+log = logging.getLogger(__name__)
 
 
 def _slug_to_title(url: str) -> str:
@@ -61,9 +64,9 @@ def _fetch_metadata(url: str, max_retries: int = 2) -> dict:
             if attempt < max_retries:
                 continue
         except Exception as e:
-            print(f"[scraper] error {url}: {e}")
+            log.info(f"[scraper] error {url}: {e}")
             return {"url": url, "title": _slug_to_title(url), "description": None, "scraped": False}
-    print(f"[scraper] error {url}: {last_exc}")
+    log.info(f"[scraper] error {url}: {last_exc}")
     return {"url": url, "title": _slug_to_title(url), "description": None, "scraped": False}
 
 
@@ -121,7 +124,7 @@ def scrape_metadata(
     for url in to_infer:
         results[url] = {"url": url, "title": _slug_to_title(url), "description": None, "scraped": False}
 
-    print(f"[scraper] fetching metadata for {len(to_scrape)} URLs ({len(to_infer)} inferred from slug), timeout={total_timeout}s")
+    log.info(f"[scraper] fetching metadata for {len(to_scrape)} URLs ({len(to_infer)} inferred from slug), timeout={total_timeout}s")
     t0 = time.time()
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {executor.submit(_fetch_metadata, url): url for url in to_scrape}
@@ -132,16 +135,16 @@ def scrape_metadata(
             meta = future.result()
             results[meta["url"]] = meta
             status = "ok" if meta["scraped"] else "err"
-            print(f"[scraper] {status}  {meta['title'][:50]:<50}  {meta['url']}")
+            log.info(f"[scraper] {status}  {meta['title'][:50]:<50}  {meta['url']}")
 
         if not_done:
-            print(f"[scraper] timed out after {total_timeout}s — {len(not_done)} URLs not fetched:")
+            log.info(f"[scraper] timed out after {total_timeout}s — {len(not_done)} URLs not fetched:")
             for future in not_done:
                 url = futures[future]
-                print(f"[scraper]   skip  {url}")
+                log.info(f"[scraper]   skip  {url}")
                 results[url] = {"url": url, "title": _slug_to_title(url), "description": None, "scraped": False}
                 future.cancel()
 
     elapsed = time.time() - t0
-    print(f"[scraper] done in {elapsed:.1f}s — {len(done)} fetched, {len(not_done) if not_done else 0} timed out")
+    log.info(f"[scraper] done in {elapsed:.1f}s — {len(done)} fetched, {len(not_done) if not_done else 0} timed out")
     return results

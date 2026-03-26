@@ -10,11 +10,14 @@ SSE event types:
   {"type": "error", "message": "..."}
 """
 import json
+import logging
+import os
 import threading
 from queue import Queue
 
-import os
 from flask import Flask, Response, request, jsonify, send_from_directory
+
+logging.basicConfig(level=logging.INFO, format="%(name)s %(levelname)s %(message)s")
 
 from main import run
 
@@ -45,13 +48,14 @@ def generate():
         return jsonify({}), 200
 
     body = request.get_json(force=True, silent=True) or {}
-    url, crawl, use_llm, max_urls, max_scrape = _parse_params(body)
-    if not url:
+    params = _parse_params(body)
+    if not params["url"]:
         return jsonify({"error": "url is required"}), 400
 
     try:
-        result = run(base_url=url, max_scrape=max_scrape, force_crawl=crawl,
-                     use_llm=use_llm, max_urls=max_urls)
+        result = run(base_url=params["url"], max_scrape=params["max_scrape"],
+                     force_crawl=params["crawl"], use_llm=params["use_llm"],
+                     max_urls=params["max_urls"])
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -62,20 +66,11 @@ def generate():
 
 @app.route("/stream")
 def stream():
-    url    = request.args.get("url", "").strip()
-    crawl  = request.args.get("crawl", "false").lower() == "true"
-    use_llm = request.args.get("llm", "false").lower() == "true"
-    max_scrape = min(int(request.args.get("max_scrape", 100)), 500)
-    max_urls_raw = request.args.get("max_urls")
-    max_urls = int(max_urls_raw) if max_urls_raw else None
-    discovery_timeout_raw = request.args.get("max_discovery_time")
-    discovery_timeout = float(discovery_timeout_raw) if discovery_timeout_raw else None
-    max_depth = int(request.args.get("max_depth", 3))
+    params = _parse_params(request.args)
+    url = params["url"]
 
     if not url:
         return jsonify({"error": "url is required"}), 400
-    if not url.startswith(("http://", "https://")):
-        url = "https://" + url
 
     q = Queue()
     _discovered = []
@@ -89,10 +84,10 @@ def stream():
 
     def pipeline():
         try:
-            result = run(base_url=url, max_scrape=max_scrape, force_crawl=crawl,
-                         use_llm=use_llm, max_urls=max_urls, on_progress=on_progress,
-                         on_phase=on_phase, discovery_timeout=discovery_timeout,
-                         max_depth=max_depth)
+            result = run(base_url=url, max_scrape=params["max_scrape"], force_crawl=params["crawl"],
+                         use_llm=params["use_llm"], max_urls=params["max_urls"], on_progress=on_progress,
+                         on_phase=on_phase, discovery_timeout=params["discovery_timeout"],
+                         max_depth=params["max_depth"])
             q.put({"type": "done", **_result_to_dict(result)})
         except Exception as e:
             q.put({"type": "error", "message": str(e)})
@@ -114,15 +109,33 @@ def stream():
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _parse_params(body: dict):
-    url = body.get("url", "").strip()
+def _parse_params(source) -> dict:
+    """Parse request parameters from either a JSON body dict or request.args."""
+    def _bool(key, default=False):
+        val = source.get(key, default)
+        return val if isinstance(val, bool) else str(val).lower() == "true"
+
+    def _int(key, default):
+        val = source.get(key)
+        return int(val) if val is not None else default
+
+    def _float(key):
+        val = source.get(key)
+        return float(val) if val is not None else None
+
+    url = (source.get("url") or "").strip()
     if url and not url.startswith(("http://", "https://")):
         url = "https://" + url
-    crawl      = bool(body.get("crawl", False))
-    use_llm    = bool(body.get("llm", False))
-    max_scrape = int(body.get("max_scrape", 100))
-    max_urls   = int(body.get("max_urls")) if body.get("max_urls") else None
-    return url, crawl, use_llm, max_urls, max_scrape
+
+    return {
+        "url":               url,
+        "crawl":             _bool("crawl"),
+        "use_llm":           _bool("llm"),
+        "max_scrape":        min(_int("max_scrape", 100), 500),
+        "max_urls":          _int("max_urls", None),
+        "discovery_timeout": _float("max_discovery_time"),
+        "max_depth":         _int("max_depth", 3),
+    }
 
 
 def _result_to_dict(result) -> dict:

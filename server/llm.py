@@ -2,10 +2,13 @@
 LLM-based llms.txt generator using Gemini.
 Passes grouped URL sections to the model and returns generated llms.txt content.
 """
+import logging
 import os
 from urllib.parse import urlparse
 
 from google import genai
+
+log = logging.getLogger(__name__)
 
 
 def _get_client():
@@ -76,8 +79,8 @@ def generate_with_llm(base_url: str, groups: dict, metadata: dict) -> tuple[str,
     prompt = _build_prompt(base_url, groups, metadata)
 
     token_estimate = len(prompt) // 4
-    print(f"[llm] prompt ~{token_estimate} tokens, {len(groups)} sections")
-    print(f"\n--- PROMPT ---\n{prompt}\n--- END PROMPT ---\n")
+    log.info(f"[llm] prompt ~{token_estimate} tokens, {len(groups)} sections")
+    log.info(f"\n--- PROMPT ---\n{prompt}\n--- END PROMPT ---\n")
 
     response = client.models.generate_content(model="gemini-3.1-flash-lite-preview", contents=prompt)
     text = response.text

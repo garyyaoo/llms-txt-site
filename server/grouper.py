@@ -25,11 +25,16 @@ def _section_for(url: str) -> str:
         return SUBDOMAIN_SECTION_MAP[subdomain]
     path = parsed.path.strip("/")
     first_segment = path.split("/")[0] if path else ""
-    # Strip file extensions (e.g. intro.html → intro)
     if "." in first_segment:
         first_segment = first_segment.rsplit(".", 1)[0]
     return first_segment.replace("-", " ").title() if first_segment else "Overview"
 
+
+def _section_url(bucket: list[str]) -> str:
+    """Reconstruct the canonical depth-1 URL for a section from any URL in its bucket."""
+    parsed = urlparse(bucket[0])
+    first_seg = parsed.path.strip("/").split("/")[0]
+    return f"{parsed.scheme}://{parsed.netloc}/{first_seg}"
 
 
 def _combined_score(url: str, metadata: dict) -> int:
@@ -43,13 +48,7 @@ def bucket_urls(urls: list[str], metadata: dict[str, dict]) -> dict[str, list[st
     """
     buckets: dict[str, list[str]] = {}
     for url in urls:
-        section = _section_for(url)
-        buckets.setdefault(section, []).append(url)
-
-    def _section_url(bucket: list[str]) -> str:
-        parsed = urlparse(bucket[0])
-        first_seg = parsed.path.strip("/").split("/")[0]
-        return f"{parsed.scheme}://{parsed.netloc}/{first_seg}"
+        buckets.setdefault(_section_for(url), []).append(url)
 
     scored = []
     for section, bucket in buckets.items():
@@ -82,14 +81,7 @@ def group_urls(
     """
     buckets: dict[str, list[str]] = {}
     for url in urls:
-        section = _section_for(url)
-        buckets.setdefault(section, []).append(url)
-
-    def _section_url(bucket: list[str]) -> str:
-        """Reconstruct the canonical depth-1 URL for a section from any URL in its bucket."""
-        parsed = urlparse(bucket[0])
-        first_seg = parsed.path.strip("/").split("/")[0]
-        return f"{parsed.scheme}://{parsed.netloc}/{first_seg}"
+        buckets.setdefault(_section_for(url), []).append(url)
 
     scored: list[tuple[int, str, list[str]]] = []
     for section, bucket in buckets.items():
@@ -117,17 +109,18 @@ def group_urls(
             best = max(bucket, key=lambda u: _combined_score(u, metadata))
             optional_urls.append(best)
             continue
-        # Geometric decay within section — URL at rank N must score >= max * decay_rate^N
-        sorted_bucket = sorted(bucket, key=lambda u: _combined_score(u, metadata), reverse=True)
-        max_in_section = _combined_score(sorted_bucket[0], metadata)
+
+        # Pre-compute scores to avoid redundant calls during sort and filter
+        url_scores = [(u, _combined_score(u, metadata)) for u in bucket]
+        url_scores.sort(key=lambda x: x[1], reverse=True)
+        max_score = url_scores[0][1]
         qualifying = [
-            u for n, u in enumerate(sorted_bucket)
-            if _combined_score(u, metadata) >= max_in_section * (decay_rate ** n)
+            u for n, (u, s) in enumerate(url_scores)
+            if s >= max_score * (decay_rate ** n)
         ]
         if qualifying:
-            sorted_qualifying = sorted(qualifying, key=lambda u: _combined_score(u, metadata), reverse=True)
             cap = max(1, round(len(bucket) ** 0.5))
-            primary[section] = sorted_qualifying[:cap]
+            primary[section] = qualifying[:cap]
 
     primary = dict(sorted(
         primary.items(),
