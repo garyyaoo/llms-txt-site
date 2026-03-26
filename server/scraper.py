@@ -1,4 +1,5 @@
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
+from concurrent.futures import ThreadPoolExecutor, wait
 from urllib.parse import urlparse
 
 import requests
@@ -17,8 +18,33 @@ def _slug_to_title(url: str) -> str:
     return segment.replace("-", " ").replace("_", " ").title()
 
 
+def extract_metadata(html: str, url: str) -> dict:
+    """Extract title and description from an already-fetched HTML string."""
+    soup = BeautifulSoup(html, "html.parser")
+
+    og_title = soup.find("meta", property="og:title")
+    title_tag = soup.find("title")
+    raw_title = (
+        (og_title.get("content", "").strip() if og_title else None)
+        or (title_tag.get_text().strip() if title_tag else None)
+    )
+    if raw_title and (" | " in raw_title or " - " in raw_title):
+        sep = " | " if " | " in raw_title else " - "
+        raw_title = raw_title.split(sep)[0].strip()
+    title = raw_title or _slug_to_title(url)
+
+    meta_desc = soup.find("meta", attrs={"name": "description"})
+    og_desc = soup.find("meta", property="og:description")
+    description = (
+        (meta_desc.get("content", "").strip() if meta_desc else None)
+        or (og_desc.get("content", "").strip() if og_desc else None)
+    )
+
+    return {"url": url, "title": title, "description": description or None, "scraped": True}
+
+
 def _fetch_metadata(url: str) -> dict:
-    """Fetch a page and extract title + description. Returns inferred values on failure."""
+    """Fetch a page and extract its metadata. Returns inferred values on failure."""
     try:
         r = requests.get(
             url,
@@ -27,31 +53,7 @@ def _fetch_metadata(url: str) -> dict:
             allow_redirects=True,
         )
         r.raise_for_status()
-        soup = BeautifulSoup(r.text, "html.parser")
-
-        # Title — prefer og:title, fall back to <title>, strip site suffix
-        og_title = soup.find("meta", property="og:title")
-        title_tag = soup.find("title")
-        raw_title = (
-            (og_title.get("content", "").strip() if og_title else None)
-            or (title_tag.get_text().strip() if title_tag else None)
-        )
-        # Strip common " | Site Name" and " - Site Name" suffixes
-        if raw_title and (" | " in raw_title or " - " in raw_title):
-            sep = " | " if " | " in raw_title else " - "
-            raw_title = raw_title.split(sep)[0].strip()
-        title = raw_title or _slug_to_title(url)
-
-        # Description — prefer meta description, fall back to og:description
-        meta_desc = soup.find("meta", attrs={"name": "description"})
-        og_desc = soup.find("meta", property="og:description")
-        description = (
-            (meta_desc.get("content", "").strip() if meta_desc else None)
-            or (og_desc.get("content", "").strip() if og_desc else None)
-        )
-
-        return {"url": url, "title": title, "description": description or None, "scraped": True}
-
+        return extract_metadata(r.text, url)
     except Exception as e:
         print(f"[scraper] error {url}: {e}")
         return {"url": url, "title": _slug_to_title(url), "description": None, "scraped": False}
@@ -82,12 +84,13 @@ def content_score(meta: dict) -> int:
 def scrape_metadata(
     urls: list[str],
     base_url: str | None = None,
-    max_scrape: int = 20,
+    max_scrape: int = 100,
     max_workers: int = 10,
+    total_timeout: float = 20.0,
 ) -> dict[str, dict]:
     """
     Scrape metadata for the top `max_scrape` URLs concurrently.
-    Remaining URLs get title inferred from slug, no description.
+    Stops after `total_timeout` seconds — any unfinished URLs are inferred from slug.
     If base_url is provided, the homepage is always included in the scrape budget.
 
     Returns {url: {title, description, scraped}} for all URLs.
@@ -97,7 +100,6 @@ def scrape_metadata(
         homepage = base_url.rstrip("/") + "/"
         if homepage in urls:
             priority.append(homepage)
-        # Also try without trailing slash
         homepage_no_slash = base_url.rstrip("/")
         if homepage_no_slash in urls and homepage_no_slash not in priority:
             priority.append(homepage_no_slash)
@@ -108,18 +110,30 @@ def scrape_metadata(
 
     results: dict[str, dict] = {}
 
-    # Infer metadata for unscraped URLs immediately
     for url in to_infer:
         results[url] = {"url": url, "title": _slug_to_title(url), "description": None, "scraped": False}
 
-    # Concurrently fetch metadata for top URLs
-    print(f"[scraper] fetching metadata for {len(to_scrape)} URLs ({len(to_infer)} inferred from slug)")
+    print(f"[scraper] fetching metadata for {len(to_scrape)} URLs ({len(to_infer)} inferred from slug), timeout={total_timeout}s")
+    t0 = time.time()
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {executor.submit(_fetch_metadata, url): url for url in to_scrape}
-        for future in as_completed(futures):
+        remaining_timeout = max(0.0, total_timeout - (time.time() - t0))
+        done, not_done = wait(futures, timeout=remaining_timeout)
+
+        for future in done:
             meta = future.result()
             results[meta["url"]] = meta
             status = "ok" if meta["scraped"] else "err"
             print(f"[scraper] {status}  {meta['title'][:50]:<50}  {meta['url']}")
 
+        if not_done:
+            print(f"[scraper] timed out after {total_timeout}s — {len(not_done)} URLs not fetched:")
+            for future in not_done:
+                url = futures[future]
+                print(f"[scraper]   skip  {url}")
+                results[url] = {"url": url, "title": _slug_to_title(url), "description": None, "scraped": False}
+                future.cancel()
+
+    elapsed = time.time() - t0
+    print(f"[scraper] done in {elapsed:.1f}s — {len(done)} fetched, {len(not_done) if not_done else 0} timed out")
     return results

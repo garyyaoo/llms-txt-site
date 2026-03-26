@@ -5,6 +5,7 @@ import requests
 from bs4 import BeautifulSoup
 import xml.etree.ElementTree as ET
 from urllib.parse import urljoin, urlparse
+from scraper import extract_metadata, _slug_to_title
 
 # Extensions that are never useful page content
 _SKIP_EXTENSIONS = {
@@ -45,7 +46,7 @@ def _is_crawlable(url: str, base_netloc: str) -> bool:
 _PRIORITY_KEYWORDS = {
     "/about", "/docs", "/documentation", "/guide", "/guides", "/api", "/faq",
     "/help", "/getting-started", "/reference", "/features",
-    "/pricing", "/products", "/services", "/overview", "/support", "/engineering",
+    "/products", "/services", "/overview", "/support", "/engineering",
 }# Subdomains that indicate high-value content regardless of path
 _HIGH_PRIORITY_SUBDOMAINS = {"docs", "api", "help", "support", "developers", "dev"}
 
@@ -101,10 +102,11 @@ def crawl_site(
     max_pages: int = 100,
     max_depth: int = 3,
     delay: float = 0.5,
-) -> list[str]:
+) -> dict:
     """
     BFS crawler that discovers pages by following links found exclusively
     in <nav>, <header>, and <footer> elements.
+    Metadata is extracted from each page during crawl — no second pass needed.
 
     Args:
         base_url:   The starting URL (homepage).
@@ -114,7 +116,7 @@ def crawl_site(
         delay:      Seconds to wait between requests.
 
     Returns:
-        Ordered list of discovered page URLs (start URL first).
+        {"urls": [...sorted by score...], "metadata": {url: {...}}}
     """
     if disallowed is None:
         disallowed = []
@@ -123,10 +125,10 @@ def crawl_site(
     base_netloc = urlparse(base_url).netloc
 
     visited: set[str] = set()
-    queued: set[str] = set()  # tracks what's already in the queue to avoid duplicates
+    queued: set[str] = set()
     found: list[str] = []
+    metadata: dict[str, dict] = {}
 
-    # Queue entries: (url, depth)
     start = base_url.rstrip("/")
     queue: deque[tuple[str, int]] = deque([(start, 0)])
     queued.add(start)
@@ -134,7 +136,6 @@ def crawl_site(
     while queue and len(found) < max_pages:
         url, depth = queue.popleft()
 
-        # Normalise: strip fragment, query params, and trailing slash
         url = urlparse(url)._replace(fragment="", query="").geturl().rstrip("/") or url
 
         if url in visited:
@@ -160,11 +161,14 @@ def crawl_site(
         except Exception as e:
             elapsed = time.time() - t0
             print(f"[crawl] error ({elapsed:.1f}s) {url}: {e}")
+            metadata[url] = {"url": url, "title": _slug_to_title(url), "description": None, "scraped": False}
             continue
 
         elapsed = time.time() - t0
         found.append(url)
-        print(f"[crawl] {len(found):>3}/{max_pages}  depth={depth}  {elapsed:.1f}s  {url}")
+        meta = extract_metadata(r.text, url)
+        metadata[url] = meta
+        print(f"[crawl] {len(found):>3}/{max_pages}  depth={depth}  {elapsed:.1f}s  {meta['title'][:50]}")
 
         if depth < max_depth:
             for link in _extract_nav_links(r.text, url):
@@ -179,24 +183,39 @@ def crawl_site(
             time.sleep(delay)
 
     print(f"[crawl] done — {len(found)} pages crawled")
-    return sorted(found, key=score_url, reverse=True)
+    urls = sorted(found, key=score_url, reverse=True)
+    return {"urls": urls, "metadata": metadata}
 
 
-def fetch_robots_txt(base_url: str) -> dict:
-    """Fetch and parse robots.txt — returns disallowed paths and sitemap URLs found within it."""
+def fetch_robots_txt(base_url: str, user_agent: str = "*") -> dict:
+    """Fetch and parse robots.txt — returns disallowed paths and sitemap URLs.
+    Only applies Disallow rules for the matching user-agent (default: '*').
+    """
     url = urljoin(base_url, "/robots.txt")
     r = requests.get(url, timeout=10)
     r.raise_for_status()
 
     disallowed = []
     sitemaps = []
+    current_agents: list[str] = []
+    in_matching_block = False
 
     for line in r.text.splitlines():
         line = line.strip()
-        if line.lower().startswith("disallow:"):
-            path = line.split(":", 1)[1].strip()
-            if path:
-                disallowed.append(path)
+        if not line or line.startswith("#"):
+            # blank line ends the current user-agent block
+            current_agents = []
+            in_matching_block = False
+            continue
+        if line.lower().startswith("user-agent:"):
+            agent = line.split(":", 1)[1].strip()
+            current_agents.append(agent.lower())
+            in_matching_block = user_agent.lower() in current_agents or "*" in current_agents
+        elif line.lower().startswith("disallow:"):
+            if in_matching_block:
+                path = line.split(":", 1)[1].strip()
+                if path:
+                    disallowed.append(path)
         elif line.lower().startswith("sitemap:"):
             sitemap_url = line.split(":", 1)[1].strip()
             sitemaps.append(sitemap_url)
@@ -234,7 +253,7 @@ def fetch_sitemap(sitemap_url: str) -> list[str]:
     return urls
 
 
-def discover_urls(base_url: str) -> dict:
+def discover_urls(base_url: str, force_crawl: bool = False, max_pages: int = 100) -> dict:
     """
     Given a base URL:
     1. Fetch robots.txt — extract disallowed paths and any sitemap references
@@ -247,6 +266,7 @@ def discover_urls(base_url: str) -> dict:
         "sitemap_urls": [],
         "page_urls": [],
         "disallowed": [],
+        "metadata": None,  # populated only when crawler fallback is used
     }
 
     # Step 1: robots.txt
@@ -267,24 +287,48 @@ def discover_urls(base_url: str) -> dict:
 
     result["sitemap_urls"] = sitemap_urls
 
-    # Step 3: fetch all sitemaps and collect page URLs
+    # Step 3: fetch sitemaps (skipped if force_crawl)
     all_urls = []
-    for sitemap_url in sitemap_urls:
-        try:
-            urls = fetch_sitemap(sitemap_url)
-            print(f"[sitemap] {sitemap_url} → {len(urls)} URLs")
-            all_urls.extend(urls)
-        except Exception as e:
-            print(f"[sitemap] Could not fetch {sitemap_url}: {e}")
+    if not force_crawl:
+        for sitemap_url in sitemap_urls:
+            try:
+                urls = fetch_sitemap(sitemap_url)
+                print(f"[sitemap] {sitemap_url} → {len(urls)} URLs")
+                all_urls.extend(urls)
+            except Exception as e:
+                print(f"[sitemap] Could not fetch {sitemap_url}: {e}")
 
-    # Step 4: if sitemap yielded nothing, fall back to nav crawler
-    if not all_urls:
-        print(f"[discover] no sitemap URLs found — falling back to nav crawler")
-        all_urls = crawl_site(base_url, disallowed=result["disallowed"])
+    # Step 4: if sitemap yielded nothing (or crawl forced), use nav crawler (metadata extracted during crawl)
+    if force_crawl or not all_urls:
+        reason = "force_crawl" if force_crawl else "no sitemap URLs found"
+        print(f"[discover] {reason} — using nav crawler")
+        crawl_result = crawl_site(base_url, disallowed=result["disallowed"], delay=0.0, max_pages=max_pages)
+        all_urls = crawl_result["urls"]
+        result["metadata"] = crawl_result["metadata"]
 
-    # Deduplicate and filter out disallowed paths
+    # Known i18n locale prefixes — strip these paths when a canonical version exists
+    _LOCALE_RE = __import__("re").compile(
+        r"^/([a-z]{2}|[a-z]{2}-[a-z]{2,4})(/|$)", __import__("re").IGNORECASE
+    )
+
+    def _canonical_path(path: str) -> str | None:
+        """Return the canonical (non-locale) path, or None if not a locale URL."""
+        m = _LOCALE_RE.match(path)
+        if not m:
+            return None
+        return path[m.end() - 1:] or "/"  # strip locale prefix, keep leading slash
+
+    # First pass: collect canonical paths that exist
+    canonical_paths: set[str] = set()
+    for url in all_urls:
+        path = urlparse(url).path
+        if not _LOCALE_RE.match(path):
+            canonical_paths.add(path.rstrip("/") or "/")
+
+    # Deduplicate and filter out disallowed paths and i18n duplicates
     seen = set()
     filtered = []
+    skipped_i18n = 0
     for url in all_urls:
         if url in seen:
             continue
@@ -295,8 +339,15 @@ def discover_urls(base_url: str) -> dict:
         # Filter meta/utility files — not useful page content
         if path.rstrip("/").endswith("llms.txt") or path.rstrip("/").endswith("llms-full.txt"):
             continue
+        # Skip i18n duplicates when a canonical URL exists
+        canonical = _canonical_path(path)
+        if canonical is not None and (canonical.rstrip("/") or "/") in canonical_paths:
+            skipped_i18n += 1
+            continue
         filtered.append(url)
 
+    if skipped_i18n:
+        print(f"[discover] filtered {skipped_i18n} i18n duplicate URLs")
     filtered.sort(key=score_url, reverse=True)
 
     result["page_urls"] = filtered

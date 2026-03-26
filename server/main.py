@@ -14,18 +14,22 @@ from scraper import scrape_metadata
 from generator import generate
 
 
-def run(base_url: str, output_path: str | None = None) -> str:
+def run(base_url: str, output_path: str | None = None, max_scrape: int = 100, force_crawl: bool = False) -> str:
     base_url = base_url.rstrip("/")
 
-    # 1. Discover
+    # 1. Discover — for crawl path, max_scrape also caps pages visited
     print(f"\n=== Discovering URLs for {base_url} ===")
-    result = discover_urls(base_url)
+    result = discover_urls(base_url, force_crawl=force_crawl, max_pages=max_scrape)
     urls = result["page_urls"]
     print(f"Discovered {len(urls)} URLs")
 
-    # 2. Scrape metadata (URLs already sorted by score)
+    # 2. Metadata — either from crawler (already fetched during BFS) or scrape top N
     print("\n=== Scraping metadata ===")
-    metadata = scrape_metadata(urls, base_url=base_url)
+    if result["metadata"] is not None:
+        print(f"[scraper] using {len(result['metadata'])} cached metadata entries from crawler")
+        metadata = result["metadata"]
+    else:
+        metadata = scrape_metadata(urls, base_url=base_url, max_scrape=max_scrape)
 
     # 3. Group using combined url + content scores
     print("\n=== Grouping ===")

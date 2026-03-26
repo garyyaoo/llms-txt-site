@@ -121,7 +121,7 @@ class TestFetchRobotsTxt:
 
     @patch("crawler.requests.get")
     def test_case_insensitive_directives(self, mock_get):
-        robots = "DISALLOW: /upper/\nSITEMAP: https://example.com/sitemap.xml\n"
+        robots = "User-agent: *\nDISALLOW: /upper/\n\nSITEMAP: https://example.com/sitemap.xml\n"
         mock_get.return_value = make_response(robots)
         result = fetch_robots_txt("https://example.com")
 
@@ -352,8 +352,8 @@ class TestScoreUrl:
     def test_features_path_scores_40(self):
         assert score_url("https://example.com/features") == 40
 
-    def test_pricing_path_scores_40(self):
-        assert score_url("https://example.com/pricing") == 40
+    def test_pricing_path_scores_zero(self):
+        assert score_url("https://example.com/pricing") == 0
 
     def test_no_keyword_no_boost(self):
         assert score_url("https://example.com/") == 0
@@ -470,3 +470,58 @@ class TestIsCrawlable:
     def test_page_with_fragment_allowed(self):
         # has a path — fragment stripped by caller, so is crawlable
         assert _is_crawlable("https://example.com/page#section", self.BASE) is True
+
+
+# ── i18n deduplication ────────────────────────────────────────────────────────
+
+class TestI18nFiltering:
+    ROBOTS = {"disallowed": [], "sitemaps": [], "raw": ""}
+
+    def _discover(self, urls):
+        with patch("crawler.fetch_robots_txt", return_value=self.ROBOTS), \
+             patch("crawler.fetch_sitemap", return_value=urls):
+            return discover_urls("https://example.com")["page_urls"]
+
+    def test_locale_duplicate_removed_when_canonical_exists(self):
+        urls = ["https://example.com/about", "https://example.com/fr/about"]
+        result = self._discover(urls)
+        assert "https://example.com/about" in result
+        assert "https://example.com/fr/about" not in result
+
+    def test_region_locale_removed(self):
+        urls = ["https://example.com/help", "https://example.com/en-gb/help"]
+        result = self._discover(urls)
+        assert "https://example.com/help" in result
+        assert "https://example.com/en-gb/help" not in result
+
+    def test_locale_kept_when_no_canonical(self):
+        # /fr/about exists but /about does not — keep it
+        urls = ["https://example.com/fr/about"]
+        result = self._discover(urls)
+        assert "https://example.com/fr/about" in result
+
+    def test_multiple_locales_all_removed(self):
+        urls = [
+            "https://example.com/about",
+            "https://example.com/fr/about",
+            "https://example.com/ja/about",
+            "https://example.com/zh-tw/about",
+        ]
+        result = self._discover(urls)
+        assert "https://example.com/about" in result
+        assert "https://example.com/fr/about" not in result
+        assert "https://example.com/ja/about" not in result
+        assert "https://example.com/zh-tw/about" not in result
+
+    def test_non_locale_path_not_filtered(self):
+        # /products and /pricing are not locale paths
+        urls = ["https://example.com/products", "https://example.com/pricing"]
+        result = self._discover(urls)
+        assert "https://example.com/products" in result
+        assert "https://example.com/pricing" in result
+
+    def test_deep_locale_path_removed(self):
+        urls = ["https://example.com/help/getting-started", "https://example.com/ko/help/getting-started"]
+        result = self._discover(urls)
+        assert "https://example.com/help/getting-started" in result
+        assert "https://example.com/ko/help/getting-started" not in result

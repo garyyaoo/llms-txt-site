@@ -2,9 +2,6 @@ from urllib.parse import urlparse
 from crawler import score_url
 from scraper import content_score
 
-# UGC sections — only the depth-1 landing page is included, not individual posts/articles
-UGC_SECTIONS = {"Blog", "Resources", "Research", "Changelog", "News", "Customers"}
-
 SUBDOMAIN_SECTION_MAP = {
     "docs":       "Documentation",
     "api":        "API Reference",
@@ -14,10 +11,10 @@ SUBDOMAIN_SECTION_MAP = {
     "dev":        "Documentation",
 }
 
-# First N sections appear with the base threshold; beyond that, strong relevance required
+# First N sections appear with the base threshold; beyond that, geometric decay applies
 SECTION_THRESHOLD = 20
-SECTION_STRONG_THRESHOLD = 40  # requires a keyword/subdomain boost
 FREE_SECTIONS = 3               # number of sections that only need to clear SECTION_THRESHOLD
+DECAY_RATE = 0.9                # each extra section requires score >= highest * DECAY_RATE^N
 
 
 def _section_for(url: str) -> str:
@@ -34,27 +31,25 @@ def _section_for(url: str) -> str:
     return first_segment.replace("-", " ").title() if first_segment else "Overview"
 
 
-def _depth(url: str) -> int:
-    return urlparse(url).path.rstrip("/").count("/")
-
 
 def _combined_score(url: str, metadata: dict) -> int:
-    return score_url(url) + content_score(metadata.get(url, {}))
+    return max(score_url(url), content_score(metadata.get(url, {})))
 
 
 def group_urls(
     urls: list[str],
     metadata: dict[str, dict],
     threshold: int = SECTION_THRESHOLD,
-    strong_threshold: int = SECTION_STRONG_THRESHOLD,
     free_sections: int = FREE_SECTIONS,
+    decay_rate: float = DECAY_RATE,
 ) -> dict[str, list[str]]:
     """
     Group URLs into sections by first path segment.
     Each section keeps only its highest-scoring URL (url score + content score).
 
-    The first `free_sections` sections (by score) only need to clear `threshold`.
-    Additional sections must clear `strong_threshold` (requires keyword/subdomain boost).
+    The first `free_sections` sections only need to clear `threshold`.
+    Each additional section N (1-indexed) must score >= highest_score * decay_rate^N,
+    creating a geometric decay: if highest=100, section 4 needs >90, section 5 >81, etc.
     Sections that don't qualify are collected into Optional.
     """
     buckets: dict[str, list[str]] = {}
@@ -62,32 +57,49 @@ def group_urls(
         section = _section_for(url)
         buckets.setdefault(section, []).append(url)
 
-    # Score each section by its best URL, then sort descending
+    def _section_url(bucket: list[str]) -> str:
+        """Reconstruct the canonical depth-1 URL for a section from any URL in its bucket."""
+        parsed = urlparse(bucket[0])
+        first_seg = parsed.path.strip("/").split("/")[0]
+        return f"{parsed.scheme}://{parsed.netloc}/{first_seg}"
+
     scored: list[tuple[int, str, list[str]]] = []
     for section, bucket in buckets.items():
-        best = max(bucket, key=lambda u: _combined_score(u, metadata))
-        scored.append((_combined_score(best, metadata), section, bucket))
+        best_content = max(bucket, key=lambda u: _combined_score(u, metadata))
+        section_score = max(
+            score_url(_section_url(bucket)),
+            content_score(metadata.get(best_content, {})),
+        )
+        scored.append((section_score, section, bucket))
     scored.sort(reverse=True)
+
+    free = scored[:free_sections]
+    baseline_score = sum(s for s, _, _ in free) / len(free) if free else 0
 
     primary: dict[str, list[str]] = {}
     optional_urls: list[str] = []
 
     for rank, (score, section, bucket) in enumerate(scored):
-        required = threshold if rank < free_sections else strong_threshold
+        if rank < free_sections:
+            required = threshold
+        else:
+            n = rank - free_sections + 1
+            required = baseline_score * (decay_rate ** n)
         if score < required:
-            # Use best depth-1 URL as Optional representative
             best = max(bucket, key=lambda u: _combined_score(u, metadata))
             optional_urls.append(best)
             continue
-        # UGC sections: only the depth-1 landing page (no individual posts/articles)
-        if section in UGC_SECTIONS:
-            depth1 = [u for u in bucket if _depth(u) <= 1]
-            qualifying = [max(depth1, key=lambda u: _combined_score(u, metadata))] if depth1 else []
-        else:
-            # Structural sections: include all URLs that individually pass the threshold
-            qualifying = [u for u in bucket if _combined_score(u, metadata) >= threshold]
+        # Geometric decay within section — URL at rank N must score >= max * decay_rate^N
+        sorted_bucket = sorted(bucket, key=lambda u: _combined_score(u, metadata), reverse=True)
+        max_in_section = _combined_score(sorted_bucket[0], metadata)
+        qualifying = [
+            u for n, u in enumerate(sorted_bucket)
+            if _combined_score(u, metadata) >= max_in_section * (decay_rate ** n)
+        ]
         if qualifying:
-            primary[section] = sorted(qualifying, key=lambda u: _combined_score(u, metadata), reverse=True)
+            sorted_qualifying = sorted(qualifying, key=lambda u: _combined_score(u, metadata), reverse=True)
+            cap = max(1, round(len(bucket) ** 0.5))
+            primary[section] = sorted_qualifying[:cap]
 
     primary = dict(sorted(
         primary.items(),
@@ -99,6 +111,7 @@ def group_urls(
 
     if optional_urls:
         optional_urls.sort(key=lambda u: _combined_score(u, metadata), reverse=True)
-        groups["Optional"] = optional_urls
+        cap = max(1, round(len(scored) ** 0.5))
+        groups["Optional"] = optional_urls[:cap]
 
     return groups
