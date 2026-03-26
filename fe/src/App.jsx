@@ -26,6 +26,7 @@ export default function App() {
   const [url, setUrl] = useState("");
   const [crawl, setCrawl] = useState(true);
   const [useLlm, setUseLlm] = useState(true);
+  const [model, setModel] = useState("gemini-3.1-flash-lite-preview");
   const [maxScrape, setMaxScrape] = useState(100);
   const [maxDiscoveryTime, setMaxDiscoveryTime] = useState(30);
   const [maxDepth, setMaxDepth] = useState(3);
@@ -64,7 +65,7 @@ export default function App() {
     setResult(null);
     setError(null);
 
-    const params = new URLSearchParams({ url, crawl, llm: useLlm, max_scrape: maxScrape, max_urls: maxScrape, max_discovery_time: maxDiscoveryTime, max_depth: maxDepth });
+    const params = new URLSearchParams({ url, crawl, llm: useLlm, model, max_scrape: maxScrape, max_urls: maxScrape, max_discovery_time: maxDiscoveryTime, max_depth: maxDepth });
 
     const es = new EventSource(`/stream?${params}`);
     esRef.current = es;
@@ -152,6 +153,15 @@ export default function App() {
             <input type="checkbox" checked={useLlm} onChange={(e) => setUseLlm(e.target.checked)} disabled={loading} />
             <span className="toggle-label">LLM mode</span>
             <span className="toggle-hint">Use Gemini instead of rule-based grouper</span>
+          </label>
+          <label className="num-field">
+            <span className="num-label">Model</span>
+            <select className="model-select" value={model} onChange={(e) => setModel(e.target.value)} disabled={loading || !useLlm}>
+              <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite</option>
+              <option value="gemini-2.5-flash">gemini-2.5-flash</option>
+              <option value="gemini-3-flash-preview">gemini-3-flash-preview</option>
+              <option value="gemini-3.1-flash-lite-preview">gemini-3.1-flash-lite-preview</option>
+            </select>
           </label>
           <label className="num-field">
             <span className="num-label">Max discovery time (s)</span>

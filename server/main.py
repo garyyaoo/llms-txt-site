@@ -40,7 +40,7 @@ def _section_insights(groups: dict, metadata: dict) -> dict:
     return {"type": "sections", "sections": sections}
 
 
-def run(base_url: str, output_path: str | None = None, max_scrape: int = 100, force_crawl: bool = False, use_llm: bool = False, max_urls: int | None = None, on_progress=None, on_phase=None, discovery_timeout: float | None = None, max_depth: int = 3) -> dict:
+def run(base_url: str, output_path: str | None = None, max_scrape: int = 100, force_crawl: bool = False, use_llm: bool = False, model: str = "gemini-3.1-flash-lite-preview", max_urls: int | None = None, on_progress=None, on_phase=None, discovery_timeout: float | None = None, max_depth: int = 3) -> dict:
     base_url = base_url.rstrip("/")
 
     # 1. Discover
@@ -73,7 +73,7 @@ def run(base_url: str, output_path: str | None = None, max_scrape: int = 100, fo
     if use_llm:
         llm_urls = urls[:max_urls] if max_urls else urls
         buckets = bucket_urls(llm_urls, metadata)
-        llms_txt, why = generate_with_llm(base_url, buckets, metadata)
+        llms_txt, why = generate_with_llm(base_url, buckets, metadata, model=model)
         if why:
             log.info("Why:\n%s", why)
         insights = {"type": "llm", "why": why or ""}

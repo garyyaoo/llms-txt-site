@@ -251,6 +251,22 @@
   border-color: var(--accent);
 }
 
+.model-select {
+  padding: 5px 8px;
+  font-size: 0.88rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text-h);
+  outline: none;
+}
+.model-select:focus {
+  border-color: var(--accent);
+}
+.model-select:disabled {
+  opacity: 0.5;
+}
+
 .spinner {
   width: 18px;
   height: 18px;

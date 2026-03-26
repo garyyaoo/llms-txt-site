@@ -4,6 +4,7 @@ Passes grouped URL sections to the model and returns generated llms.txt content.
 """
 import logging
 import os
+import time
 from urllib.parse import urlparse
 
 from google import genai
@@ -70,7 +71,7 @@ def _build_prompt(base_url: str, groups: dict, metadata: dict) -> str:
     return "\n".join(lines)
 
 
-def generate_with_llm(base_url: str, groups: dict, metadata: dict) -> tuple[str, str]:
+def generate_with_llm(base_url: str, groups: dict, metadata: dict, model: str = "gemini-3.1-flash-lite-preview", max_retries: int = 3) -> tuple[str, str]:
     """
     Generate llms.txt via Gemini, using grouped sections as structured input.
     Returns (llms_txt, why) as a tuple.
@@ -82,8 +83,19 @@ def generate_with_llm(base_url: str, groups: dict, metadata: dict) -> tuple[str,
     log.info(f"[llm] prompt ~{token_estimate} tokens, {len(groups)} sections")
     log.info(f"\n--- PROMPT ---\n{prompt}\n--- END PROMPT ---\n")
 
-    response = client.models.generate_content(model="gemini-3.1-flash-lite-preview", contents=prompt)
-    text = response.text
+    last_exc = None
+    for attempt in range(max_retries):
+        try:
+            response = client.models.generate_content(model=model, contents=prompt)
+            text = response.text
+            break
+        except Exception as e:
+            last_exc = e
+            wait = 2 ** attempt
+            log.info(f"[llm] attempt {attempt + 1} failed: {e} — retrying in {wait}s")
+            time.sleep(wait)
+    else:
+        raise RuntimeError(f"Gemini failed after {max_retries} attempts: {last_exc}")
 
     # Split on the separator line between llms.txt and Why section
     if "\n---\n" in text:

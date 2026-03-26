@@ -85,9 +85,9 @@ def stream():
     def pipeline():
         try:
             result = run(base_url=url, max_scrape=params["max_scrape"], force_crawl=params["crawl"],
-                         use_llm=params["use_llm"], max_urls=params["max_urls"], on_progress=on_progress,
-                         on_phase=on_phase, discovery_timeout=params["discovery_timeout"],
-                         max_depth=params["max_depth"])
+                         use_llm=params["use_llm"], model=params["model"], max_urls=params["max_urls"],
+                         on_progress=on_progress, on_phase=on_phase,
+                         discovery_timeout=params["discovery_timeout"], max_depth=params["max_depth"])
             q.put({"type": "done", **_result_to_dict(result)})
         except Exception as e:
             q.put({"type": "error", "message": str(e)})
@@ -127,10 +127,19 @@ def _parse_params(source) -> dict:
     if url and not url.startswith(("http://", "https://")):
         url = "https://" + url
 
+    _ALLOWED_MODELS = {
+        "gemini-2.5-flash-lite", "gemini-2.5-flash",
+        "gemini-3-flash-preview", "gemini-3.1-flash-lite-preview",
+    }
+    model = source.get("model", "gemini-3.1-flash-lite-preview")
+    if model not in _ALLOWED_MODELS:
+        model = "gemini-3.1-flash-lite-preview"
+
     return {
         "url":               url,
         "crawl":             _bool("crawl"),
         "use_llm":           _bool("llm"),
+        "model":             model,
         "max_scrape":        min(_int("max_scrape", 100), 500),
         "max_urls":          _int("max_urls", None),
         "discovery_timeout": _float("max_discovery_time"),
