@@ -18,6 +18,11 @@ SUBDOMAIN_SECTION_MAP = {
 SECTION_THRESHOLD = 20
 FREE_SECTIONS = 3               # number of sections that only need to clear SECTION_THRESHOLD
 DECAY_RATE = 0.9                # each extra section requires score >= highest * DECAY_RATE^N
+# Utility/legal sections that are never useful for LLMs
+_BLOCKED_SECTIONS = {
+    "legal", "privacy", "terms", "cookies", "cookie policy",
+    "accessibility", "sitemap", "404", "search",
+}
 
 
 def _section_for(url: str) -> str:
@@ -104,11 +109,14 @@ def group_urls(
 
     free = scored[:free_sections]
     baseline_score = sum(s for s, _, _ in free) / len(free) if free else 0
+    floor = baseline_score / 2
 
     primary: dict[str, list[str]] = {}
     optional_urls: list[str] = []
 
     for rank, (score, section, bucket) in enumerate(scored):
+        if section.lower() in _BLOCKED_SECTIONS or score < floor:
+            continue
         if rank < free_sections:
             required = threshold
         else:

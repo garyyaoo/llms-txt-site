@@ -229,7 +229,7 @@ export default function App() {
               {result.insights.type === "llm"
                 ? (result.insights.why || "No reasoning provided.")
                 : result.insights.sections.map((s) =>
-                    `## ${s.name}  [score:${s.score}]\n` +
+                    `## ${s.name}  [score:${s.score}  urls:${s.urls.length}]\n` +
                     s.urls.map((e) =>
                       `  [score:${e.score}]  ${e.title}\n  ${e.url}`
                     ).join("\n")
