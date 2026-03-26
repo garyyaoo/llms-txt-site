@@ -1,0 +1,6 @@
+fe/node_modules
+fe/dist
+output/
+**/__pycache__
+**/*.pyc
+.git

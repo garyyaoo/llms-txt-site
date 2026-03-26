@@ -13,11 +13,14 @@ import json
 import threading
 from queue import Queue
 
-from flask import Flask, Response, request, jsonify
+import os
+from flask import Flask, Response, request, jsonify, send_from_directory
 
 from main import run
 
-app = Flask(__name__)
+_STATIC = os.path.join(os.path.dirname(__file__), "fe/dist")
+
+app = Flask(__name__, static_folder=_STATIC, static_url_path="")
 
 _SENTINEL = object()
 
@@ -129,6 +132,14 @@ def _result_to_dict(result) -> dict:
     if result.get("insights"):
         d["insights"] = result["insights"]
     return d
+
+
+@app.route("/", defaults={"path": ""})
+@app.route("/<path:path>")
+def serve_frontend(path):
+    if path and os.path.exists(os.path.join(_STATIC, path)):
+        return send_from_directory(_STATIC, path)
+    return send_from_directory(_STATIC, "index.html")
 
 
 if __name__ == "__main__":
