@@ -1,6 +1,9 @@
+import re
 from urllib.parse import urlparse
 from crawler import score_url
 from scraper import content_score
+
+_LOCALE_RE = re.compile(r"^([a-z]{2}|[a-z]{2}-[a-z]{2,4})$", re.IGNORECASE)
 
 SUBDOMAIN_SECTION_MAP = {
     "docs":       "Documentation",
@@ -18,22 +21,28 @@ DECAY_RATE = 0.9                # each extra section requires score >= highest *
 
 
 def _section_for(url: str) -> str:
-    """Infer section name from subdomain or first path segment."""
+    """Infer section name from subdomain or first non-locale path segment."""
     parsed = urlparse(url)
     subdomain = parsed.hostname.split(".")[0] if parsed.hostname else ""
     if subdomain in SUBDOMAIN_SECTION_MAP:
         return SUBDOMAIN_SECTION_MAP[subdomain]
-    path = parsed.path.strip("/")
-    first_segment = path.split("/")[0] if path else ""
-    if "." in first_segment:
-        first_segment = first_segment.rsplit(".", 1)[0]
-    return first_segment.replace("-", " ").title() if first_segment else "Overview"
+    segments = [s for s in parsed.path.strip("/").split("/") if s]
+    # Skip locale prefixes like "en", "en-us", "fr", etc.
+    while segments and _LOCALE_RE.match(segments[0]):
+        segments = segments[1:]
+    segment = segments[0] if segments else ""
+    if "." in segment:
+        segment = segment.rsplit(".", 1)[0]
+    return segment.replace("-", " ").title() if segment else "Overview"
 
 
 def _section_url(bucket: list[str]) -> str:
     """Reconstruct the canonical depth-1 URL for a section from any URL in its bucket."""
     parsed = urlparse(bucket[0])
-    first_seg = parsed.path.strip("/").split("/")[0]
+    segments = [s for s in parsed.path.strip("/").split("/") if s]
+    while segments and _LOCALE_RE.match(segments[0]):
+        segments = segments[1:]
+    first_seg = segments[0] if segments else ""
     return f"{parsed.scheme}://{parsed.netloc}/{first_seg}"
 
 

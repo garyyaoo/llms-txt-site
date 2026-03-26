@@ -34,7 +34,9 @@ def _section_insights(groups: dict, metadata: dict) -> dict:
                 "content_score": c_score,
                 "score": max(u_score, c_score),
             })
-        sections.append({"name": section, "urls": entries})
+        top_score = max((e["score"] for e in entries), default=0)
+        sections.append({"name": section, "score": top_score, "urls": entries})
+    sections.sort(key=lambda s: s["score"], reverse=True)
     return {"type": "sections", "sections": sections}
 
 
@@ -77,7 +79,8 @@ def run(base_url: str, output_path: str | None = None, max_scrape: int = 100, fo
         insights = {"type": "llm", "why": why or ""}
     else:
         llms_txt = generate(base_url, groups, metadata)
-        insights = _section_insights(groups, metadata)
+        all_buckets = bucket_urls(group_input, metadata)
+        insights = _section_insights(all_buckets, metadata)
 
     if output_path:
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)

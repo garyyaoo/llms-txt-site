@@ -17,4 +17,4 @@ COPY server/ ./
 COPY --from=frontend /app/fe/dist ./fe/dist
 
 EXPOSE 8080
-CMD ["gunicorn", "app:app", "--bind", "0.0.0.0:8080", "--timeout", "300", "--worker-class", "gevent", "--workers", "2"]
+CMD ["gunicorn", "app:app", "--bind", "0.0.0.0:8080", "--timeout", "300", "--workers", "4"]

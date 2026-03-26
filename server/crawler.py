@@ -1,7 +1,9 @@
 import re
 import logging
+import threading
 import time
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 from bs4 import BeautifulSoup
@@ -67,6 +69,10 @@ def score_url(url: str) -> int:
     parsed = urlparse(url)
     path = parsed.path.lower().rstrip("/")
     subdomain = parsed.hostname.split(".")[0] if parsed.hostname else ""
+
+    # Strip locale prefix (e.g. /en/, /en-us/) before scoring so locale-only
+    path = _LOCALE_RE.sub("/", path, count=1).rstrip("/") or path
+
     depth = path.count("/") if path else 0
     score = 0
 
@@ -83,7 +89,6 @@ def score_url(url: str) -> int:
             score += 40
 
     # URL length penalty — paths beyond 20 chars are penalised heavily
-    # Every 2 chars beyond 20 costs 1 point (e.g. 60-char path = -20, 20-char = 0)
     score -= max(0, len(path) - 20) // 2
 
     # Depth penalty: depth 1=0, 2=5, 3=20, 4=40, 5=60, ...
@@ -107,103 +112,124 @@ def _extract_nav_links(html: str, page_url: str) -> list[str]:
     return links
 
 
+def _fetch_page(url: str) -> tuple[str, requests.Response | None, Exception | None]:
+    """Fetch a single page. Returns (url, response, error)."""
+    try:
+        r = requests.get(
+            url,
+            timeout=2,
+            headers={"User-Agent": "Mozilla/5.0 (compatible; llmstxt-bot/1.0)"},
+            allow_redirects=True,
+        )
+        r.raise_for_status()
+        return url, r, None
+    except Exception as e:
+        return url, None, e
+
+
 def crawl_site(
     base_url: str,
     disallowed: list[str] | None = None,
     max_pages: int = 100,
     max_depth: int = 3,
-    delay: float = 0.1,
+    workers: int = 8,
     on_progress=None,
     total_timeout: float | None = None,
 ) -> dict:
-    """
-    BFS crawler that discovers pages by following links found exclusively
-    in <nav>, <header>, and <footer> elements.
-    Metadata is extracted from each page during crawl — no second pass needed.
-
-    Args:
-        base_url:   The starting URL (homepage).
-        disallowed: Path prefixes to skip (from robots.txt).
-        max_pages:  Stop after collecting this many URLs.
-        max_depth:  Do not follow links beyond this hop count from the start.
-        delay:      Seconds to wait between requests.
-
-    Returns:
-        {"urls": [...sorted by score...], "metadata": {url: {...}}}
-    """
     if disallowed is None:
         disallowed = []
 
     base_url = base_url.rstrip("/")
     base_netloc = urlparse(base_url).netloc
 
+    lock = threading.Lock()
     visited: set[str] = set()
     queued: set[str] = set()
     found: list[str] = []
     metadata: dict[str, dict] = {}
 
-    start = base_url.rstrip("/")
-    queue: deque[tuple[str, int]] = deque([(start, 0)])
-    queued.add(start)
+    # Queue holds (url, depth) tuples
+    queue: deque[tuple[str, int]] = deque([(_normalize_url(base_url) or base_url, 0)])
+    queued.add(_normalize_url(base_url) or base_url)
     t_start = time.time()
 
-    while queue and len(found) < max_pages:
-        if total_timeout and (time.time() - t_start) >= total_timeout:
-            log.info(f"[crawl] stopping — timeout {total_timeout}s reached after {len(found)} pages")
-            break
-        url, depth = queue.popleft()
+    def _timed_out() -> bool:
+        return bool(total_timeout and (time.time() - t_start) >= total_timeout)
 
-        url = _normalize_url(url) or url
-
-        if url in visited:
-            continue
-        visited.add(url)
-
+    def _should_skip(url: str) -> bool:
         path = urlparse(url).path
-        if any(path.startswith(d) for d in disallowed):
-            log.info(f"[crawl] skip (disallowed) {url}")
-            continue
+        return any(path.startswith(d) for d in disallowed)
 
-        if total_timeout and (time.time() - t_start) >= total_timeout:
-            log.info(f"[crawl] stopping — timeout {total_timeout}s reached after {len(found)} pages")
-            break
+    done = False
 
-        t0 = time.time()
-        try:
-            r = requests.get(
-                url,
-                timeout=2,
-                headers={"User-Agent": "Mozilla/5.0 (compatible; llmstxt-bot/1.0)"},
-                allow_redirects=True,
-            )
-            r.raise_for_status()
-            if "text/html" not in r.headers.get("Content-Type", ""):
-                continue
-        except Exception as e:
-            elapsed = time.time() - t0
-            log.info(f"[crawl] error ({elapsed:.1f}s) {url}: {e}")
-            metadata[url] = {"url": url, "title": _slug_to_title(url), "description": None, "scraped": False}
-            continue
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        while not done and not _timed_out():
+            with lock:
+                if len(found) >= max_pages:
+                    done = True
+                    break
+                # Pull up to `workers` URLs from the queue
+                batch: list[tuple[str, int]] = []
+                while queue and len(batch) < workers:
+                    url, depth = queue.popleft()
+                    url = _normalize_url(url) or url
+                    if url in visited or _should_skip(url):
+                        continue
+                    visited.add(url)
+                    batch.append((url, depth))
 
-        elapsed = time.time() - t0
-        found.append(url)
-        meta = extract_metadata(r.text, url)
-        metadata[url] = meta
-        log.info(f"[crawl] {len(found):>3}/{max_pages}  depth={depth}  {elapsed:.1f}s  {meta['title'][:50]}")
-        if on_progress:
-            on_progress(url)
+            if not batch:
+                done = True
+                break
 
-        if depth < max_depth:
-            for link in _extract_nav_links(r.text, url):
-                norm = _normalize_url(link)
-                if not norm or not _is_crawlable(norm, base_netloc):
+            try:
+                futures = {executor.submit(_fetch_page, url): (url, depth) for url, depth in batch}
+            except RuntimeError:
+                break
+
+            for future in as_completed(futures):
+                url, depth = futures[future]
+
+                if _timed_out() or done:
+                    done = True
+                    break
+
+                _, response, error = future.result()
+
+                if error or response is None:
+                    log.info(f"[crawl] error {url}: {error}")
+                    with lock:
+                        metadata[url] = {"url": url, "title": _slug_to_title(url), "description": None, "scraped": False}
                     continue
-                if norm not in visited and norm not in queued:
-                    queued.add(norm)
-                    queue.append((norm, depth + 1))
 
-        if delay and len(found) < max_pages:
-            time.sleep(delay)
+                if "text/html" not in response.headers.get("Content-Type", ""):
+                    continue
+
+                meta = extract_metadata(response.text, url)
+
+                with lock:
+                    if len(found) >= max_pages:
+                        done = True
+                        continue
+                    found.append(url)
+                    metadata[url] = meta
+                    log.info(f"[crawl] {len(found):>3}/{max_pages}  depth={depth}  {meta['title'][:50]}")
+
+                if on_progress:
+                    on_progress(url)
+
+                if depth < max_depth:
+                    with lock:
+                        for link in _extract_nav_links(response.text, url):
+                            norm = _normalize_url(link)
+                            if not norm or not _is_crawlable(norm, base_netloc):
+                                continue
+                            if norm not in visited and norm not in queued:
+                                queued.add(norm)
+                                queue.append((norm, depth + 1))
+
+    if _timed_out():
+        log.info(f"[crawl] stopping — timeout {total_timeout}s reached after {len(found)} pages")
 
     log.info(f"[crawl] done — {len(found)} pages crawled")
     urls = sorted(found, key=score_url, reverse=True)
@@ -333,7 +359,7 @@ def discover_urls(base_url: str, force_crawl: bool = False, max_pages: int = 100
         reason = "force_crawl" if force_crawl else "no sitemap URLs found"
         log.info(f"[discover] {reason} — using nav crawler")
         remaining = max(0.0, discovery_timeout - (time.time() - t_discover)) if discovery_timeout else None
-        crawl_result = crawl_site(base_url, disallowed=result["disallowed"], delay=0.0, max_pages=max_pages, on_progress=on_progress, total_timeout=remaining, max_depth=max_depth)
+        crawl_result = crawl_site(base_url, disallowed=result["disallowed"], max_pages=max_pages, on_progress=on_progress, total_timeout=remaining, max_depth=max_depth)
         all_urls = crawl_result["urls"]
         result["metadata"] = crawl_result["metadata"]
 

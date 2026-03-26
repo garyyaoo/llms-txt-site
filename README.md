@@ -29,8 +29,32 @@ Open `http://localhost:5173`.
 
 ## Deploying
 
-Build and run with Docker:
+### Docker (local)
+
 ```bash
 docker build -t llmstxt .
 docker run -p 8080:8080 -e GEMINI_API_KEY=your_key llmstxt
+```
+
+### Docker via AWS
+
+I deployed using AWS App Runner -- its configured to poll an ECR repo for updates.
+
+**1. Create ECR repository (one time)**
+```bash
+aws ecr create-repository --repository-name llmstxt --region us-east-1
+```
+
+**2. Authenticate Docker to ECR**
+```bash
+aws ecr get-login-password --region us-east-1 | \
+  docker login --username AWS --password-stdin \
+  <account-id>.dkr.ecr.us-east-1.amazonaws.com
+```
+
+**3. Build for `linux/amd64` and push**
+```bash
+docker buildx build --platform linux/amd64 \
+  -t <account-id>.dkr.ecr.us-east-1.amazonaws.com/llmstxt:latest \
+  --push .
 ```

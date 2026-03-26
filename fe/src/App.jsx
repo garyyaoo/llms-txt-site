@@ -52,7 +52,6 @@ export default function App() {
     setDiscoveredUrls([]);
     setResult(null);
     setError(null);
-    setUrl("");
   }
 
   function handleSubmit(e) {
@@ -155,11 +154,6 @@ export default function App() {
             <span className="toggle-hint">Use Gemini instead of rule-based grouper</span>
           </label>
           <label className="num-field">
-            <span className="num-label">Max scrape</span>
-            <input type="number" min={1} max={500} value={maxScrape}
-              onChange={(e) => setMaxScrape(e.target.value)} disabled={loading} />
-          </label>
-          <label className="num-field">
             <span className="num-label">Max discovery time (s)</span>
             <input type="number" min={5} max={300} value={maxDiscoveryTime}
               onChange={(e) => setMaxDiscoveryTime(e.target.value)} disabled={loading} />
@@ -168,6 +162,11 @@ export default function App() {
             <span className="num-label">Crawl depth</span>
             <input type="number" min={1} max={10} value={maxDepth}
               onChange={(e) => setMaxDepth(e.target.value)} disabled={loading} />
+          </label>
+          <label className="num-field">
+            <span className="num-label">Max scrape</span>
+            <input type="number" min={1} max={500} value={maxScrape}
+              onChange={(e) => setMaxScrape(e.target.value)} disabled={loading} />
           </label>
         </div>
       </form>
@@ -230,9 +229,9 @@ export default function App() {
               {result.insights.type === "llm"
                 ? (result.insights.why || "No reasoning provided.")
                 : result.insights.sections.map((s) =>
-                    `## ${s.name}\n` +
+                    `## ${s.name}  [score:${s.score}]\n` +
                     s.urls.map((e) =>
-                      `  [url:${e.url_score} content:${e.content_score} score:${e.score}]  ${e.title}`
+                      `  [score:${e.score}]  ${e.title}\n  ${e.url}`
                     ).join("\n")
                   ).join("\n\n")}
             </pre>
