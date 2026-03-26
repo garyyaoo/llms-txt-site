@@ -1,0 +1,523 @@
+.app {
+  max-width: 680px;
+  margin: 0 auto;
+  padding: 72px 24px 80px;
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+  background: transparent;
+}
+
+/* ── Hero ── */
+.hero {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.hero-title {
+  margin: 0;
+  font-size: clamp(4rem, 14vw, 7.5rem);
+  font-weight: 800;
+  letter-spacing: -4px;
+  line-height: 0.95;
+  white-space: normal;
+  background: linear-gradient(135deg, var(--text-h) 40%, var(--accent) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  transition: font-size 0.5s ease, letter-spacing 0.4s ease, line-height 0.4s ease;
+}
+
+.app--compact .hero-title {
+  font-size: 2.4rem;
+  letter-spacing: -1px;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+.hero-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  max-height: 200px;
+  opacity: 1;
+  overflow: hidden;
+  transition: max-height 0.4s ease, opacity 0.25s ease;
+}
+
+.app--compact .hero-steps {
+  max-height: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.hero-steps li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 1rem;
+  color: var(--text);
+}
+
+.hero-step-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1.5px solid var(--accent);
+  color: var(--accent);
+  font-size: 0.72rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+/* ── Form ── */
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  transition: margin-top 0.5s ease;
+}
+
+.app--compact .form {
+  margin-top: -16px;
+}
+
+/* ── Steps section (hidden until compact) ── */
+.steps-section {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+  overflow: hidden;
+  max-height: 0;
+  opacity: 0;
+  transition: max-height 0.6s ease 0.3s, opacity 0.4s ease 0.35s;
+}
+
+.app--compact .steps-section {
+  max-height: 3000px;
+  opacity: 1;
+}
+
+.url-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.url-input {
+  flex: 1;
+  padding: 12px 16px;
+  font-size: 1rem;
+  font-family: var(--mono);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text-h);
+  outline: none;
+  transition: border-color 0.15s;
+}
+.url-input:focus {
+  border-color: var(--accent);
+}
+.url-input:disabled {
+  opacity: 0.5;
+}
+
+.btn-generate {
+  padding: 12px 24px;
+  font-size: 1rem;
+  font-weight: 500;
+  border: none;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: opacity 0.15s;
+}
+.btn-generate:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.btn-generate:not(:disabled):hover {
+  opacity: 0.85;
+}
+
+/* ── Cog button ── */
+.btn-cog {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.btn-cog:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.btn-cog.active {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-bg, rgba(61,122,232,0.12));
+}
+.btn-cog:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* ── Settings drawer ── */
+.drawer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+  padding: 0 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--code-bg);
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+  transition: max-height 0.3s ease, opacity 0.2s ease, padding 0.3s ease;
+}
+.drawer--open {
+  max-height: 200px;
+  opacity: 1;
+  padding: 16px;
+  pointer-events: auto;
+}
+
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+.toggle input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.toggle-label {
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--text-h);
+}
+.toggle-hint {
+  font-size: 0.78rem;
+  color: var(--text);
+}
+
+.num-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.num-label {
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--text-h);
+  white-space: nowrap;
+}
+.num-field input[type="number"] {
+  width: 90px;
+  padding: 5px 8px;
+  font-size: 0.88rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text-h);
+  outline: none;
+}
+.num-field input[type="number"]:focus {
+  border-color: var(--accent);
+}
+
+.spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ── Step icon ── */
+.step-icon {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: border-color 0.25s ease, background-color 0.25s ease;
+}
+.step-icon--active {
+  border-color: var(--accent);
+  border-top-color: transparent;
+  animation: spin 0.7s linear infinite;
+}
+.step-icon--done {
+  border-color: var(--accent);
+  background-color: var(--accent);
+  animation: none;
+}
+.step-check {
+  width: 9px;
+  height: 9px;
+  color: #fff;
+  animation: check-in 0.2s ease forwards;
+}
+@keyframes check-in {
+  from { opacity: 0; transform: scale(0.4); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+/* ── Progress card ── */
+.progress-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.progress-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  background: var(--code-bg);
+  border-bottom: 1px solid var(--border);
+}
+.progress-header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.progress-title {
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--text);
+}
+.progress-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Animated dots shown while loading */
+.dot-pulse::after {
+  content: '…';
+  animation: pulse 1.2s steps(3, end) infinite;
+  display: inline-block;
+  width: 1em;
+  overflow: hidden;
+}
+@keyframes pulse {
+  0%   { width: 0; }
+  100% { width: 1em; }
+}
+
+.url-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 220px;
+  overflow-y: auto;
+  background: var(--bg);
+}
+.url-item {
+  padding: 4px 16px;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.url-item:last-child {
+  border-bottom: none;
+}
+
+/* ── Error ── */
+.error {
+  padding: 12px 16px;
+  border-radius: 8px;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  color: #ef4444;
+  font-size: 0.9rem;
+}
+
+/* ── Result ── */
+.result {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.result-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  background: var(--code-bg);
+  border-bottom: 1px solid var(--border);
+}
+.result-header h2 {
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--text);
+  margin: 0;
+}
+
+.why-heading {
+  border-top: 1px solid var(--border);
+}
+
+.btn-copy {
+  padding: 4px 12px;
+  font-size: 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text-h);
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+.btn-copy:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ── Generation Insights ── */
+.insights-sections {
+  display: flex;
+  flex-direction: column;
+}
+
+.insights-section {
+  border-bottom: 1px solid var(--border);
+}
+.insights-section:last-child {
+  border-bottom: none;
+}
+
+.insights-section-name {
+  padding: 8px 16px 6px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--accent);
+  background: var(--code-bg);
+  border-bottom: 1px solid var(--border);
+}
+
+.insights-url-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.insights-url-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.insights-url-row:last-child {
+  border-bottom: none;
+}
+
+.insights-title {
+  font-size: 0.82rem;
+  color: var(--text-h);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.insights-scores {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.insights-score-pill {
+  font-size: 0.7rem;
+  font-family: var(--mono);
+  padding: 2px 7px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.insights-score-combined {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.output-empty {
+  padding: 32px 20px;
+  font-size: 0.85rem;
+  color: var(--text);
+  text-align: center;
+  background: var(--bg);
+  opacity: 0.5;
+}
+
+.output {
+  margin: 0;
+  padding: 20px;
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  line-height: 1.65;
+  color: var(--text-h);
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--bg);
+  overflow-x: auto;
+}
+
+.insights-output {
+  max-height: 320px;
+  overflow-y: auto;
+}
