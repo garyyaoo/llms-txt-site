@@ -2,6 +2,8 @@
 
 Generate an `llms.txt` file for any website — a structured summary of a site's content designed for LLMs.
 
+<video src="assets/llmstxt-demo.mp4" controls width="100%"></video>
+
 ## How it works
 
 1. **Discover** — crawls the site via sitemap or BFS nav crawler
