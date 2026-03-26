@@ -43,20 +43,28 @@ def extract_metadata(html: str, url: str) -> dict:
     return {"url": url, "title": title, "description": description or None, "scraped": True}
 
 
-def _fetch_metadata(url: str) -> dict:
-    """Fetch a page and extract its metadata. Returns inferred values on failure."""
-    try:
-        r = requests.get(
-            url,
-            timeout=5,
-            headers={"User-Agent": "Mozilla/5.0 (compatible; llmstxt-bot/1.0)"},
-            allow_redirects=True,
-        )
-        r.raise_for_status()
-        return extract_metadata(r.text, url)
-    except Exception as e:
-        print(f"[scraper] error {url}: {e}")
-        return {"url": url, "title": _slug_to_title(url), "description": None, "scraped": False}
+def _fetch_metadata(url: str, max_retries: int = 2) -> dict:
+    """Fetch a page and extract its metadata. Retries on ReadTimeout up to max_retries times."""
+    last_exc = None
+    for attempt in range(max_retries + 1):
+        try:
+            r = requests.get(
+                url,
+                timeout=5,
+                headers={"User-Agent": "Mozilla/5.0 (compatible; llmstxt-bot/1.0)"},
+                allow_redirects=True,
+            )
+            r.raise_for_status()
+            return extract_metadata(r.text, url)
+        except requests.exceptions.ReadTimeout as e:
+            last_exc = e
+            if attempt < max_retries:
+                continue
+        except Exception as e:
+            print(f"[scraper] error {url}: {e}")
+            return {"url": url, "title": _slug_to_title(url), "description": None, "scraped": False}
+    print(f"[scraper] error {url}: {last_exc}")
+    return {"url": url, "title": _slug_to_title(url), "description": None, "scraped": False}
 
 
 _HOW_TO_PATTERNS = [

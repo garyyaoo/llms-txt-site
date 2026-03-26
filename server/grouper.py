@@ -36,6 +36,34 @@ def _combined_score(url: str, metadata: dict) -> int:
     return max(score_url(url), content_score(metadata.get(url, {})))
 
 
+def bucket_urls(urls: list[str], metadata: dict[str, dict]) -> dict[str, list[str]]:
+    """
+    Group URLs into sections by first path segment, ordered by section score.
+    No filtering applied — all URLs are included. Used by the LLM path.
+    """
+    buckets: dict[str, list[str]] = {}
+    for url in urls:
+        section = _section_for(url)
+        buckets.setdefault(section, []).append(url)
+
+    def _section_url(bucket: list[str]) -> str:
+        parsed = urlparse(bucket[0])
+        first_seg = parsed.path.strip("/").split("/")[0]
+        return f"{parsed.scheme}://{parsed.netloc}/{first_seg}"
+
+    scored = []
+    for section, bucket in buckets.items():
+        best_content = max(bucket, key=lambda u: _combined_score(u, metadata))
+        section_score = max(
+            score_url(_section_url(bucket)),
+            content_score(metadata.get(best_content, {})),
+        )
+        scored.append((section_score, section, bucket))
+    scored.sort(reverse=True)
+
+    return {section: bucket for _, section, bucket in scored}
+
+
 def group_urls(
     urls: list[str],
     metadata: dict[str, dict],

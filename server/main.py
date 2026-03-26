@@ -14,7 +14,7 @@ from scraper import scrape_metadata
 from generator import generate
 
 
-def run(base_url: str, output_path: str | None = None, max_scrape: int = 100, force_crawl: bool = False) -> str:
+def run(base_url: str, output_path: str | None = None, max_scrape: int = 100, force_crawl: bool = False, use_llm: bool = False, max_urls: int | None = None) -> str:
     base_url = base_url.rstrip("/")
 
     # 1. Discover — for crawl path, max_scrape also caps pages visited
@@ -33,13 +33,23 @@ def run(base_url: str, output_path: str | None = None, max_scrape: int = 100, fo
 
     # 3. Group using combined url + content scores
     print("\n=== Grouping ===")
-    groups = group_urls(urls, metadata)
+    group_input = urls[:max_urls] if max_urls else urls
+    groups = group_urls(group_input, metadata)
     for section, section_urls in groups.items():
         print(f"  {section}: {len(section_urls)} URLs")
 
     # 4. Generate
     print("\n=== Generating llms.txt ===")
-    output = generate(base_url, groups, metadata)
+    if use_llm:
+        from llm import generate_with_llm
+        from grouper import bucket_urls
+        llm_urls = urls[:max_urls] if max_urls else urls
+        buckets = bucket_urls(llm_urls, metadata)
+        output, why = generate_with_llm(base_url, buckets, metadata)
+        if why:
+            print(f"\n=== Why ===\n{why}\n")
+    else:
+        output = generate(base_url, groups, metadata)
 
     if output_path:
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
