@@ -101,7 +101,9 @@ def crawl_site(
     disallowed: list[str] | None = None,
     max_pages: int = 100,
     max_depth: int = 3,
-    delay: float = 0.5,
+    delay: float = 0.1,
+    on_progress=None,
+    total_timeout: float | None = None,
 ) -> dict:
     """
     BFS crawler that discovers pages by following links found exclusively
@@ -132,8 +134,12 @@ def crawl_site(
     start = base_url.rstrip("/")
     queue: deque[tuple[str, int]] = deque([(start, 0)])
     queued.add(start)
+    t_start = time.time()
 
     while queue and len(found) < max_pages:
+        if total_timeout and (time.time() - t_start) >= total_timeout:
+            print(f"[crawl] stopping — timeout {total_timeout}s reached after {len(found)} pages")
+            break
         url, depth = queue.popleft()
 
         url = urlparse(url)._replace(fragment="", query="").geturl().rstrip("/") or url
@@ -147,11 +153,15 @@ def crawl_site(
             print(f"[crawl] skip (disallowed) {url}")
             continue
 
+        if total_timeout and (time.time() - t_start) >= total_timeout:
+            print(f"[crawl] stopping — timeout {total_timeout}s reached after {len(found)} pages")
+            break
+
         t0 = time.time()
         try:
             r = requests.get(
                 url,
-                timeout=3,
+                timeout=2,
                 headers={"User-Agent": "Mozilla/5.0 (compatible; llmstxt-bot/1.0)"},
                 allow_redirects=True,
             )
@@ -169,6 +179,8 @@ def crawl_site(
         meta = extract_metadata(r.text, url)
         metadata[url] = meta
         print(f"[crawl] {len(found):>3}/{max_pages}  depth={depth}  {elapsed:.1f}s  {meta['title'][:50]}")
+        if on_progress:
+            on_progress(url)
 
         if depth < max_depth:
             for link in _extract_nav_links(r.text, url):
@@ -227,7 +239,7 @@ def fetch_robots_txt(base_url: str, user_agent: str = "*") -> dict:
     }
 
 
-def fetch_sitemap(sitemap_url: str) -> list[str]:
+def fetch_sitemap(sitemap_url: str, on_progress=None) -> list[str]:
     """Fetch a sitemap XML and return all page URLs. Handles sitemap index files recursively."""
     r = requests.get(sitemap_url, timeout=10)
     r.raise_for_status()
@@ -241,7 +253,7 @@ def fetch_sitemap(sitemap_url: str) -> list[str]:
         for sitemap in root.findall("sm:sitemap", ns):
             loc = sitemap.findtext("sm:loc", namespaces=ns)
             if loc:
-                urls.extend(fetch_sitemap(loc.strip()))
+                urls.extend(fetch_sitemap(loc.strip(), on_progress=on_progress))
         return urls
 
     # Regular sitemap — contains page URLs
@@ -249,11 +261,14 @@ def fetch_sitemap(sitemap_url: str) -> list[str]:
     for url in root.findall("sm:url", ns):
         loc = url.findtext("sm:loc", namespaces=ns)
         if loc:
-            urls.append(loc.strip())
+            u = loc.strip()
+            urls.append(u)
+            if on_progress:
+                on_progress(u)
     return urls
 
 
-def discover_urls(base_url: str, force_crawl: bool = False, max_pages: int = 100) -> dict:
+def discover_urls(base_url: str, force_crawl: bool = False, max_pages: int = 100, on_progress=None, discovery_timeout: float | None = None, max_depth: int = 5) -> dict:
     """
     Given a base URL:
     1. Fetch robots.txt — extract disallowed paths and any sitemap references
@@ -289,10 +304,14 @@ def discover_urls(base_url: str, force_crawl: bool = False, max_pages: int = 100
 
     # Step 3: fetch sitemaps (skipped if force_crawl)
     all_urls = []
+    t_discover = time.time()
     if not force_crawl:
         for sitemap_url in sitemap_urls:
+            if discovery_timeout and (time.time() - t_discover) >= discovery_timeout:
+                print(f"[discover] sitemap fetch stopped — timeout {discovery_timeout}s reached")
+                break
             try:
-                urls = fetch_sitemap(sitemap_url)
+                urls = fetch_sitemap(sitemap_url, on_progress=on_progress)
                 print(f"[sitemap] {sitemap_url} → {len(urls)} URLs")
                 all_urls.extend(urls)
             except Exception as e:
@@ -302,7 +321,8 @@ def discover_urls(base_url: str, force_crawl: bool = False, max_pages: int = 100
     if force_crawl or not all_urls:
         reason = "force_crawl" if force_crawl else "no sitemap URLs found"
         print(f"[discover] {reason} — using nav crawler")
-        crawl_result = crawl_site(base_url, disallowed=result["disallowed"], delay=0.0, max_pages=max_pages)
+        remaining = max(0.0, discovery_timeout - (time.time() - t_discover)) if discovery_timeout else None
+        crawl_result = crawl_site(base_url, disallowed=result["disallowed"], delay=0.0, max_pages=max_pages, on_progress=on_progress, total_timeout=remaining, max_depth=max_depth)
         all_urls = crawl_result["urls"]
         result["metadata"] = crawl_result["metadata"]
 
